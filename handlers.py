@@ -709,7 +709,13 @@ async def admin_delete_profile(update: Update, context: ContextTypes.DEFAULT_TYP
         await q.message.reply_text("Доступ к админ-панели ограничен.")
         return
     
-    username = q.data.split(':', 1)[1]
+    # Parse callback: admin:delete:USERNAME
+    parts = q.data.split(':')
+    if len(parts) < 3:
+        await q.message.reply_text("Ошибка: неверная команда.")
+        return
+    username = parts[2]
+    
     profile = db.get_profile_by_username(username)
     if not profile:
         await q.message.reply_text(f"Профиль @{username} не найден.")
@@ -1030,4 +1036,23 @@ async def admin_app_receive(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             except Exception:
                 logger.exception("Failed to notify admin %s about admin application", aid)
     
+    return -1
+
+
+### Cancel handlers for AFK and Admin Application
+
+async def afk_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Cancel AFK request"""
+    message = update.message
+    if message:
+        await message.reply_text("❌ Заявка на AFK отменена.")
+    context.user_data.pop('afk_days', None)
+    return -1
+
+
+async def admin_app_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Cancel admin application"""
+    message = update.message
+    if message:
+        await message.reply_text("❌ Заявка на админа отменена.")
     return -1

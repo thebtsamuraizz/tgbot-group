@@ -62,7 +62,9 @@ def main():
             handlers.AFK_WAIT_DAYS: [MessageHandler(filters.TEXT & ~filters.COMMAND, handlers.afk_receive_days)],
             handlers.AFK_WAIT_REASON: [MessageHandler(filters.TEXT & ~filters.COMMAND, handlers.afk_receive_reason)],
         },
-        fallbacks=[],
+        fallbacks=[
+            MessageHandler(filters.Regex('^Отмена$|^отмена$|^Cancel$|^cancel$'), handlers.afk_cancel),
+        ],
     )
     app.add_handler(afk_conv)
 
@@ -72,7 +74,9 @@ def main():
         states={
             handlers.AA_WAIT_TEXT: [MessageHandler(filters.TEXT & ~filters.COMMAND, handlers.admin_app_receive)],
         },
-        fallbacks=[],
+        fallbacks=[
+            MessageHandler(filters.Regex('^Отмена$|^отмена$|^Cancel$|^cancel$'), handlers.admin_app_cancel),
+        ],
     )
     app.add_handler(admin_app_conv)
 

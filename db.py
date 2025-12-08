@@ -265,3 +265,15 @@ def get_reports() -> List[Dict[str, Any]]:
         rows = [dict(row) for row in cur.fetchall()]
         conn.close()
         return rows
+
+
+def clear_reports() -> bool:
+    """Delete all reports from database"""
+    with _lock:
+        conn = _connect()
+        cur = conn.cursor()
+        cur.execute("DELETE FROM reports")
+        conn.commit()
+        affected = cur.rowcount
+        conn.close()
+        return affected > 0

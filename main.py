@@ -30,7 +30,6 @@ def main():
             handlers.NP_WAIT_TEXT: [MessageHandler(filters.TEXT & ~filters.COMMAND, handlers.new_profile_receive), MessageHandler(filters.TEXT & ~filters.COMMAND, handlers.new_profile_receive_single)],
         },
         fallbacks=[],
-        per_message=True,
     )
     app.add_handler(new_conv)
 
@@ -47,6 +46,27 @@ def main():
     )
     app.add_handler(report_conv)
 
+    # AFK conversation (handles AFK request flow: reason + days)
+    afk_conv = ConversationHandler(
+        entry_points=[MessageHandler(filters.Regex('^AFK$'), handlers.afk_start)],
+        states={
+            handlers.AFK_WAIT_DAYS: [MessageHandler(filters.TEXT & ~filters.COMMAND, handlers.afk_receive_days)],
+            handlers.AFK_WAIT_REASON: [MessageHandler(filters.TEXT & ~filters.COMMAND, handlers.afk_receive_reason)],
+        },
+        fallbacks=[],
+    )
+    app.add_handler(afk_conv)
+
+    # Admin application conversation (handles admin application flow)
+    admin_app_conv = ConversationHandler(
+        entry_points=[MessageHandler(filters.Regex('^Заявка на админа$'), handlers.admin_app_start)],
+        states={
+            handlers.AA_WAIT_TEXT: [MessageHandler(filters.TEXT & ~filters.COMMAND, handlers.admin_app_receive)],
+        },
+        fallbacks=[],
+    )
+    app.add_handler(admin_app_conv)
+
     # Edit profile conversation
     edit_conv = ConversationHandler(
         entry_points=[CallbackQueryHandler(handlers.profile_edit_start_cb, pattern=r'^profile:edit_start$')],
@@ -54,7 +74,6 @@ def main():
             handlers.EP_WAIT_TEXT: [MessageHandler(filters.TEXT & ~filters.COMMAND, handlers.edit_profile_receive)],
         },
         fallbacks=[],
-        per_message=True,
     )
     app.add_handler(edit_conv)
 
@@ -70,6 +89,8 @@ def main():
     app.add_handler(MessageHandler(filters.Regex('^Админы$'), handlers.admins_list_entry))
     app.add_handler(MessageHandler(filters.Regex('^Анкета$'), handlers.profile_menu_entry))
     app.add_handler(MessageHandler(filters.Regex('^Админ панель$'), handlers.admin_panel_entry))
+    app.add_handler(MessageHandler(filters.Regex('^AFK$'), handlers.afk_start))
+    app.add_handler(MessageHandler(filters.Regex('^Заявка на админа$'), handlers.admin_app_start))
 
     # ========== CALLBACK QUERY HANDLERS ==========
     # Callback handlers
@@ -82,8 +103,11 @@ def main():
     app.add_handler(CallbackQueryHandler(handlers.profile_edit_start_cb, pattern=r'^profile:edit_start$'))
     # Admin panel callbacks
     app.add_handler(CallbackQueryHandler(handlers.admin_reports_view, pattern=r'^admin:reports$'))
+    app.add_handler(CallbackQueryHandler(handlers.admin_clear_reports, pattern=r'^admin:clear_reports$'))
     app.add_handler(CallbackQueryHandler(handlers.admin_new_profiles_view, pattern=r'^admin:new_profiles$'))
     app.add_handler(CallbackQueryHandler(handlers.admin_manage_profiles, pattern=r'^admin:manage_profiles$'))
+    app.add_handler(CallbackQueryHandler(handlers.admin_afk_requests, pattern=r'^admin:afk_requests$'))
+    app.add_handler(CallbackQueryHandler(handlers.admin_admin_applications, pattern=r'^admin:admin_applications$'))
     app.add_handler(CallbackQueryHandler(handlers.admin_delete_profile, pattern=r'^admin:delete:'))
     # review callbacks (accept/reject)
     app.add_handler(CallbackQueryHandler(handlers.admin_review_cb, pattern=r'^review:'))

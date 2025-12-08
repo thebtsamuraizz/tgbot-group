@@ -7,6 +7,8 @@ def main_menu() -> ReplyKeyboardMarkup:
         ["Информация о пользователях"],
         ["Анкета"],
         ["Репорт"],
+        ["AFK"],
+        ["Заявка на админа"],
         ["Информация о чате"],
         ["Админы"],
         ["Админ панель"],
@@ -27,7 +29,6 @@ def users_list_kb(usernames: Iterable[str]) -> InlineKeyboardMarkup:
 def profile_actions_kb(username: str, is_admin: bool = False, user_id: int = None, profile_owner_id: int = None) -> InlineKeyboardMarkup:
     buttons = [[InlineKeyboardButton(text="Назад", callback_data="back:users")]]
     
-    # Allow editing if user is admin or if they own the profile
     can_edit = is_admin or (user_id and profile_owner_id and user_id == profile_owner_id)
     if can_edit:
         buttons[0].append(InlineKeyboardButton(text="Редактировать", callback_data=f"edit:{username}"))

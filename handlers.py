@@ -553,6 +553,8 @@ async def admin_panel_entry(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             [InlineKeyboardButton(text="Посмотреть репорты", callback_data="admin:reports")],
             [InlineKeyboardButton(text="Новые анкеты (user-added)", callback_data="admin:new_profiles")],
             [InlineKeyboardButton(text="Управление анкетами", callback_data="admin:manage_profiles")],
+            [InlineKeyboardButton(text="AFK заявки", callback_data="admin:afk_requests")],
+            [InlineKeyboardButton(text="Заявки на админа", callback_data="admin:admin_applications")],
             [InlineKeyboardButton(text="Закрыть", callback_data="back:menu")],
         ]
     )
@@ -571,12 +573,36 @@ async def admin_reports_view(update: Update, context: ContextTypes.DEFAULT_TYPE)
     if not reports:
         await q.message.reply_text("Репортов пока нет.")
         return
-    # show last 10 reports summary
+    
+    # show last 10 reports summary with clear button
     lines = []
     for r in reports[:10]:
         lines.append(f"ID: {r['id']} | @{r.get('reporter_username') or 'unknown'} | {r.get('category')} | {r.get('created_at')}. Причина: {r.get('reason')[:80]}")
-    text = "Последние репорты:\n" + "\n---\n".join(lines)
-    await q.message.reply_text(text)
+    text = f"Последние репорты (всего: {len(reports)}):\n" + "\n---\n".join(lines)
+    
+    from telegram import InlineKeyboardMarkup, InlineKeyboardButton
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton(text="🗑️ Очистить все репорты", callback_data="admin:clear_reports")],
+        [InlineKeyboardButton(text="Назад", callback_data="back:menu")],
+    ])
+    await q.message.reply_text(text, reply_markup=kb)
+
+
+async def admin_clear_reports(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Clear all reports from database"""
+    q = update.callback_query
+    await q.answer()
+    user = update.effective_user
+    if not user or (user.id != config.SUPER_ADMIN_ID and user.id not in config.ADMIN_IDS):
+        await q.message.reply_text("Доступ к админ-панели ограничен.")
+        return
+    
+    ok = db.clear_reports()
+    if ok:
+        logger.info('admin_clear_reports: all reports cleared by admin %s', user.id)
+        await q.message.reply_text("✅ Все репорты очищены.")
+    else:
+        await q.message.reply_text("Репортов не было для очистки.")
 
 
 async def admin_new_profiles_view(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -608,7 +634,7 @@ async def admin_manage_profiles(update: Update, context: ContextTypes.DEFAULT_TY
     q = update.callback_query
     await q.answer()
     user = update.effective_user
-    if not user or user.id != config.SUPER_ADMIN_ID:
+    if not user or (user.id != config.SUPER_ADMIN_ID and user.id not in config.ADMIN_IDS):
         await q.message.reply_text("Доступ к админ-панели ограничен.")
         return
     
@@ -628,7 +654,7 @@ async def admin_delete_profile(update: Update, context: ContextTypes.DEFAULT_TYP
     q = update.callback_query
     await q.answer()
     user = update.effective_user
-    if not user or user.id != config.SUPER_ADMIN_ID:
+    if not user or (user.id != config.SUPER_ADMIN_ID and user.id not in config.ADMIN_IDS):
         await q.message.reply_text("Доступ к админ-панели ограничен.")
         return
     
@@ -727,3 +753,218 @@ async def admin_review_cb(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             await q.message.reply_text(f'Ошибка при удалении анкеты @{username}.')
     else:
         await q.message.reply_text('Неизвестное действие.')
+
+
+### AFK flow (Conversation)
+
+AFK_WAIT_DAYS = 4
+AFK_WAIT_REASON = 5
+
+
+async def afk_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Start AFK request flow"""
+    user = update.effective_user
+    if not user or not user.username:
+        await update.message.reply_text("⚠️ Установите username в профиле Telegram.")
+        return -1
+    
+    logger.info('afk_start invoked by user=%s', user.id)
+    await update.message.reply_text(AFK_INFO)
+    await update.message.reply_text(AFK_PROMPT_DAYS)
+    return AFK_WAIT_DAYS
+
+
+async def afk_receive_days(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Receive number of days for AFK"""
+    user = update.effective_user
+    text = update.message.text or ""
+    
+    try:
+        days = int(text.strip())
+        if days < 1 or days > 14:
+            await update.message.reply_text("❌ Количество дней должно быть от 1 до 14.")
+            return AFK_WAIT_DAYS
+        context.user_data['afk_days'] = days
+        logger.info('afk_receive_days: user=%s days=%d', user.id if user else None, days)
+        await update.message.reply_text(AFK_PROMPT_REASON)
+        return AFK_WAIT_REASON
+    except ValueError:
+        await update.message.reply_text("❌ Пожалуйста, введите число (1-14).")
+        return AFK_WAIT_DAYS
+
+
+async def afk_receive_reason(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Receive reason for AFK and submit to admin panel"""
+    user = update.effective_user
+    reason = (update.message.text or "").strip()
+    days = context.user_data.get('afk_days', 1)
+    
+    if not reason:
+        await update.message.reply_text("❌ Пожалуйста, укажите причину.")
+        return AFK_WAIT_REASON
+    
+    if len(reason) > 500:
+        reason = reason[:500]
+    
+    logger.info('afk_receive_reason: user=%s username=%s days=%d reason=%s', user.id if user else None, user.username if user else None, days, reason[:100])
+    
+    # Save AFK request to database (add to a special reports table or create afk_requests table)
+    afk_req = {
+        'user_id': user.id if user else None,
+        'username': user.username if user else None,
+        'days': days,
+        'reason': reason,
+        'created_at': iso_now(),
+        'status': 'pending',  # pending review
+    }
+    
+    # Store in database (we'll use a simple approach: add to reports with category 'afk')
+    r = {
+        'reporter_id': user.id if user else None,
+        'reporter_username': user.username if user else None,
+        'category': 'afk_request',
+        'target_identifier': None,
+        'reason': f"AFK на {days} дней. Причина: {reason}",
+        'attachments': None,
+        'created_at': iso_now(),
+    }
+    db.add_report(r)
+    
+    await update.message.reply_text(AFK_SUBMITTED)
+    
+    # Notify admins
+    notified_ids = set(config.ADMIN_IDS or [])
+    if config.SUPER_ADMIN_ID:
+        notified_ids.add(config.SUPER_ADMIN_ID)
+    
+    if notified_ids:
+        text = f"🌙 Новая AFK заявка от @{user.username} ({user.id})\n\n⏰ Срок: {days} дней\n\n📝 Причина:\n{reason}"
+        for aid in notified_ids:
+            try:
+                await context.bot.send_message(chat_id=aid, text=text)
+            except Exception:
+                logger.exception("Failed to notify admin %s about AFK request", aid)
+    
+    context.user_data.pop('afk_days', None)
+    return -1
+
+
+async def admin_afk_requests(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Show AFK requests from admin panel"""
+    q = update.callback_query
+    await q.answer()
+    user = update.effective_user
+    if not user or (user.id != config.SUPER_ADMIN_ID and user.id not in config.ADMIN_IDS):
+        await q.message.reply_text("Доступ к админ-панели ограничен.")
+        return
+    
+    # Get all AFK requests (stored as reports with category 'afk_request')
+    reports = db.get_reports()
+    afk_requests = [r for r in reports if r.get('category') == 'afk_request']
+    
+    if not afk_requests:
+        await q.message.reply_text("AFK заявок пока нет.")
+        return
+    
+    # Show last 10 AFK requests
+    lines = []
+    for r in afk_requests[:10]:
+        lines.append(f"ID: {r['id']} | @{r.get('reporter_username')} | {r.get('created_at')}\n{r.get('reason')[:150]}")
+    text = f"AFK заявки (всего: {len(afk_requests)}):\n\n" + "\n---\n".join(lines)
+    
+    from telegram import InlineKeyboardMarkup, InlineKeyboardButton
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton(text="Назад", callback_data="back:menu")],
+    ])
+    await q.message.reply_text(text, reply_markup=kb)
+
+
+async def admin_admin_applications(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Show admin applications from admin panel"""
+    q = update.callback_query
+    await q.answer()
+    user = update.effective_user
+    if not user or (user.id != config.SUPER_ADMIN_ID and user.id not in config.ADMIN_IDS):
+        await q.message.reply_text("Доступ к админ-панели ограничен.")
+        return
+    
+    # Get all admin applications (stored as reports with category 'admin_application')
+    reports = db.get_reports()
+    admin_apps = [r for r in reports if r.get('category') == 'admin_application']
+    
+    if not admin_apps:
+        await q.message.reply_text("Заявок на админа пока нет.")
+        return
+    
+    # Show last 10 admin applications
+    lines = []
+    for r in admin_apps[:10]:
+        lines.append(f"ID: {r['id']} | @{r.get('reporter_username')} ({r.get('reporter_id')}) | {r.get('created_at')}\n{r.get('reason')[:150]}")
+    text = f"Заявки на админа (всего: {len(admin_apps)}):\n\n" + "\n---\n".join(lines)
+    
+    from telegram import InlineKeyboardMarkup, InlineKeyboardButton
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton(text="Назад", callback_data="back:menu")],
+    ])
+    await q.message.reply_text(text, reply_markup=kb)
+
+
+### ADMIN APPLICATION flow (Conversation)
+
+AA_WAIT_TEXT = 6
+
+
+async def admin_app_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Start admin application flow"""
+    user = update.effective_user
+    if not user or not user.username:
+        await update.message.reply_text("⚠️ Установите username в профиле Telegram.")
+        return -1
+    
+    logger.info('admin_app_start invoked by user=%s', user.id)
+    await update.message.reply_text(ADMIN_APP_PROMPT)
+    return AA_WAIT_TEXT
+
+
+async def admin_app_receive(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Receive admin application text and submit to admin panel"""
+    user = update.effective_user
+    app_text = (update.message.text or "").strip()
+    
+    if not app_text:
+        await update.message.reply_text("❌ Пожалуйста, опишите вашу заявку.")
+        return AA_WAIT_TEXT
+    
+    if len(app_text) > 1000:
+        app_text = app_text[:1000]
+    
+    logger.info('admin_app_receive: user=%s username=%s text=%s', user.id if user else None, user.username if user else None, app_text[:100])
+    
+    # Store admin application to database (use reports table with category 'admin_application')
+    r = {
+        'reporter_id': user.id if user else None,
+        'reporter_username': user.username if user else None,
+        'category': 'admin_application',
+        'target_identifier': None,
+        'reason': app_text,
+        'attachments': None,
+        'created_at': iso_now(),
+    }
+    db.add_report(r)
+    
+    await update.message.reply_text(ADMIN_APP_SUBMITTED)
+    
+    # Notify admins
+    notified_ids = set(config.ADMIN_IDS or [])
+    if config.SUPER_ADMIN_ID:
+        notified_ids.add(config.SUPER_ADMIN_ID)
+    
+    if notified_ids:
+        text = f"📋 Новая заявка на админа от @{user.username} ({user.id})\n\n{app_text}"
+        for aid in notified_ids:
+            try:
+                await context.bot.send_message(chat_id=aid, text=text)
+            except Exception:
+                logger.exception("Failed to notify admin %s about admin application", aid)
+    
+    return -1

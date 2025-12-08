@@ -15,8 +15,17 @@ def main():
         logger.error('TELEGRAM_BOT_TOKEN is not set. Please set env var or .env file.')
         return
 
-    logger.info('Starting bot (python-telegram-bot)')
-    app = ApplicationBuilder().token(token).build()
+    logger.info('Starting bot (python-telegram-bot) with async optimizations')
+    
+    # Оптимизация для одновременной работы с несколькими пользователями
+    app = (
+        ApplicationBuilder()
+        .token(token)
+        .read_timeout(20)
+        .write_timeout(20)
+        .connect_timeout(15)
+        .build()
+    )
 
     db.init_db()
 
@@ -129,7 +138,7 @@ def main():
     # admin editing hook
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handlers.admin_receive_edit))
 
-    logger.info('Bot ready, starting polling')
+    logger.info('Bot ready, starting polling with optimizations')
     app.run_polling()
 
 

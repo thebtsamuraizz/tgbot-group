@@ -8,8 +8,17 @@ _lock = Lock()
 
 
 def _connect():
-    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+    """Create optimized SQLite connection for concurrent access"""
+    conn = sqlite3.connect(DB_PATH, check_same_thread=False, timeout=10.0)
     conn.row_factory = sqlite3.Row
+    # WAL mode enables concurrent reads without blocking writes
+    conn.execute("PRAGMA journal_mode=WAL")
+    # Sync mode NORMAL provides good balance between safety and speed
+    conn.execute("PRAGMA synchronous=NORMAL")
+    # Increase cache size for better performance
+    conn.execute("PRAGMA cache_size=10000")
+    # Enable query optimization
+    conn.execute("PRAGMA optimize")
     return conn
 
 
@@ -69,6 +78,18 @@ def init_db() -> None:
                 cur.execute("UPDATE profiles SET status = 'approved' WHERE status IS NULL OR status = ''")
             except Exception:
                 pass
+        
+        # Create indexes for fast queries
+        try:
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_profiles_username ON profiles(username)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_profiles_status ON profiles(status)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_profiles_added_by_id ON profiles(added_by_id)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_reports_category ON reports(category)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_reports_reporter_id ON reports(reporter_id)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_reports_created_at ON reports(created_at)")
+        except Exception:
+            pass
+        
         conn.commit()
         conn.close()
     # seed initial data

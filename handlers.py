@@ -15,8 +15,30 @@ import utils
 import config
 from utils import iso_now, parse_profile_text, short_profile_card
 from typing import Dict, Any
+from functools import lru_cache
+from time import time
 
 logger = logging.getLogger(__name__)
+
+# Simple in-memory cache for frequently accessed data with TTL
+_cache = {}
+_cache_ttl = 60  # Cache timeout in seconds
+
+
+def _get_cached(key: str, default=None):
+    """Get value from cache if not expired"""
+    if key in _cache:
+        value, timestamp = _cache[key]
+        if time() - timestamp < _cache_ttl:
+            return value
+        else:
+            del _cache[key]
+    return default
+
+
+def _set_cache(key: str, value):
+    """Set value in cache with current timestamp"""
+    _cache[key] = (value, time())
 
 
 ### MAIN MENU
@@ -33,7 +55,13 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 async def users_list_entry(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     # send single message with inline keyboard
-    profiles = db.get_all_profiles(status='approved')
+    # Try to use cached profiles first
+    cache_key = 'all_approved_profiles'
+    profiles = _get_cached(cache_key)
+    if profiles is None:
+        profiles = db.get_all_profiles(status='approved')
+        _set_cache(cache_key, profiles)
+    
     usernames = [p['username'] for p in profiles]
     await update.message.reply_text(USERS_LIST_PROMPT, reply_markup=users_list_kb(usernames))
 
@@ -59,7 +87,13 @@ async def view_profile_cb(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 async def back_to_users(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     q = update.callback_query
     await q.answer()
-    profiles = db.get_all_profiles()
+    # Use cached profiles
+    cache_key = 'all_profiles'
+    profiles = _get_cached(cache_key)
+    if profiles is None:
+        profiles = db.get_all_profiles()
+        _set_cache(cache_key, profiles)
+    
     usernames = [p['username'] for p in profiles]
     # send list again
     await q.message.reply_text(USERS_LIST_PROMPT, reply_markup=users_list_kb(usernames))
@@ -359,6 +393,14 @@ RP_WAIT_REASON = 2
 
 
 async def report_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    user = update.effective_user
+    # Check if user has a profile
+    if user and user.username:
+        profile = db.get_profile_by_username(user.username)
+        if not profile:
+            await update.message.reply_text("❌ Вы можете подать репорт только если у вас есть анкета.\n\nСначала создайте анкету в разделе 'Анкета'.")
+            return -1
+    
     logger.info('report_start invoked by user=%s chat=%s', update.effective_user and update.effective_user.id, update.effective_chat and update.effective_chat.id)
     await update.message.reply_text("Что хотите репортить?", reply_markup=report_categories_kb())
     return RP_WAIT_REASON
@@ -371,6 +413,15 @@ async def try_auto_report_submit(update: Update, context: ContextTypes.DEFAULT_T
     If only category is found, ask the user for a reason (start the flow manually by prompting categories).
     """
     text = (update.message.text or '').strip()
+    user = update.effective_user
+    
+    # Check if user has a profile
+    if user and user.username:
+        profile = db.get_profile_by_username(user.username)
+        if not profile:
+            await update.message.reply_text("❌ Вы можете подать репорт только если у вас есть анкета.\n\nСначала создайте анкету в разделе 'Анкета'.")
+            return
+    
     logger.info('try_auto_report_submit: incoming message chat=%s user=%s text=%s', update.effective_chat and update.effective_chat.id, update.effective_user and update.effective_user.id, text[:120])
     if not text:
         return
@@ -768,6 +819,12 @@ async def afk_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         await update.message.reply_text("⚠️ Установите username в профиле Telegram.")
         return -1
     
+    # Check if user has a profile
+    profile = db.get_profile_by_username(user.username)
+    if not profile:
+        await update.message.reply_text("❌ Вы можете подать заявку на AFK только если у вас есть анкета.\n\nСначала создайте анкету в разделе 'Анкета'.")
+        return -1
+    
     logger.info('afk_start invoked by user=%s', user.id)
     await update.message.reply_text(AFK_INFO)
     await update.message.reply_text(AFK_PROMPT_DAYS)
@@ -919,6 +976,12 @@ async def admin_app_start(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     user = update.effective_user
     if not user or not user.username:
         await update.message.reply_text("⚠️ Установите username в профиле Telegram.")
+        return -1
+    
+    # Check if user has a profile
+    profile = db.get_profile_by_username(user.username)
+    if not profile:
+        await update.message.reply_text("❌ Вы можете подать заявку на админа только если у вас есть анкета.\n\nСначала создайте анкету в разделе 'Анкета'.")
         return -1
     
     logger.info('admin_app_start invoked by user=%s', user.id)

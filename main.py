@@ -25,11 +25,12 @@ def main():
     
     # New profile conversation
     new_conv = ConversationHandler(
-        entry_points=[MessageHandler(filters.Regex('^Новая анкета$'), handlers.new_profile_start)],
+        entry_points=[CallbackQueryHandler(handlers.profile_new_start_cb, pattern=r'^profile:new_start$')],
         states={
             handlers.NP_WAIT_TEXT: [MessageHandler(filters.TEXT & ~filters.COMMAND, handlers.new_profile_receive), MessageHandler(filters.TEXT & ~filters.COMMAND, handlers.new_profile_receive_single)],
         },
         fallbacks=[],
+        per_message=True,
     )
     app.add_handler(new_conv)
 
@@ -46,6 +47,17 @@ def main():
     )
     app.add_handler(report_conv)
 
+    # Edit profile conversation
+    edit_conv = ConversationHandler(
+        entry_points=[CallbackQueryHandler(handlers.profile_edit_start_cb, pattern=r'^profile:edit_start$')],
+        states={
+            handlers.EP_WAIT_TEXT: [MessageHandler(filters.TEXT & ~filters.COMMAND, handlers.edit_profile_receive)],
+        },
+        fallbacks=[],
+        per_message=True,
+    )
+    app.add_handler(edit_conv)
+
     # ========== COMMAND HANDLERS ==========
     # Command handlers
     app.add_handler(CommandHandler('start', handlers.start))
@@ -55,18 +67,24 @@ def main():
     # Menu messages
     app.add_handler(MessageHandler(filters.Regex('^Информация о пользователях$'), handlers.users_list_entry))
     app.add_handler(MessageHandler(filters.Regex('^Информация о чате$'), handlers.chat_info_cmd))
+    app.add_handler(MessageHandler(filters.Regex('^Админы$'), handlers.admins_list_entry))
+    app.add_handler(MessageHandler(filters.Regex('^Анкета$'), handlers.profile_menu_entry))
     app.add_handler(MessageHandler(filters.Regex('^Админ панель$'), handlers.admin_panel_entry))
 
     # ========== CALLBACK QUERY HANDLERS ==========
     # Callback handlers
     app.add_handler(CallbackQueryHandler(handlers.view_profile_cb, pattern=r'^view:'))
     app.add_handler(CallbackQueryHandler(handlers.back_to_users, pattern=r'^back:users$|^back:menu$|^back:add_new$'))
-    app.add_handler(CallbackQueryHandler(handlers.edit_profile_cb, pattern=r'^edit:'))
     app.add_handler(CallbackQueryHandler(handlers.delete_profile_cb, pattern=r'^delete:'))
     app.add_handler(CallbackQueryHandler(handlers.delete_profile_confirm_cb, pattern=r'^delete_confirm:'))
+    # Profile menu callbacks
+    app.add_handler(CallbackQueryHandler(handlers.profile_new_start_cb, pattern=r'^profile:new_start$'))
+    app.add_handler(CallbackQueryHandler(handlers.profile_edit_start_cb, pattern=r'^profile:edit_start$'))
     # Admin panel callbacks
     app.add_handler(CallbackQueryHandler(handlers.admin_reports_view, pattern=r'^admin:reports$'))
     app.add_handler(CallbackQueryHandler(handlers.admin_new_profiles_view, pattern=r'^admin:new_profiles$'))
+    app.add_handler(CallbackQueryHandler(handlers.admin_manage_profiles, pattern=r'^admin:manage_profiles$'))
+    app.add_handler(CallbackQueryHandler(handlers.admin_delete_profile, pattern=r'^admin:delete:'))
     # review callbacks (accept/reject)
     app.add_handler(CallbackQueryHandler(handlers.admin_review_cb, pattern=r'^review:'))
     # callback for choosing category in report flow
@@ -74,6 +92,9 @@ def main():
     # new profile inline callbacks
     app.add_handler(CallbackQueryHandler(handlers.new_profile_confirm_cb, pattern=r'^new:confirm$'))
     app.add_handler(CallbackQueryHandler(handlers.new_profile_cancel_cb, pattern=r'^new:cancel$'))
+    # edit profile inline callbacks
+    app.add_handler(CallbackQueryHandler(handlers.edit_profile_confirm_cb, pattern=r'^edit:confirm$'))
+    app.add_handler(CallbackQueryHandler(handlers.edit_profile_cancel_cb, pattern=r'^edit:cancel$'))
 
     # ========== GLOBAL TEXT HANDLERS (LOW PRIORITY) ==========
     # These are fallback handlers that process any remaining TEXT messages.

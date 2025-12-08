@@ -5,9 +5,10 @@ from typing import Iterable
 def main_menu() -> ReplyKeyboardMarkup:
     keyboard = [
         ["Информация о пользователях"],
-        ["Новая анкета"],
+        ["Анкета"],
         ["Репорт"],
         ["Информация о чате"],
+        ["Админы"],
         ["Админ панель"],
     ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
@@ -23,10 +24,15 @@ def users_list_kb(usernames: Iterable[str]) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(buttons)
 
 
-def profile_actions_kb(username: str, is_admin: bool = False) -> InlineKeyboardMarkup:
+def profile_actions_kb(username: str, is_admin: bool = False, user_id: int = None, profile_owner_id: int = None) -> InlineKeyboardMarkup:
     buttons = [[InlineKeyboardButton(text="Назад", callback_data="back:users")]]
-    if is_admin:
+    
+    # Allow editing if user is admin or if they own the profile
+    can_edit = is_admin or (user_id and profile_owner_id and user_id == profile_owner_id)
+    if can_edit:
         buttons[0].append(InlineKeyboardButton(text="Редактировать", callback_data=f"edit:{username}"))
+    
+    if is_admin:
         buttons[0].append(InlineKeyboardButton(text="Удалить", callback_data=f"delete:{username}"))
     return InlineKeyboardMarkup(buttons)
 
@@ -55,8 +61,36 @@ def new_profile_preview_kb() -> InlineKeyboardMarkup:
     ])
 
 
+def profile_menu_kb(has_profile: bool) -> InlineKeyboardMarkup:
+    """Menu to create new profile or edit existing one"""
+    if has_profile:
+        return InlineKeyboardMarkup([
+            [InlineKeyboardButton(text="Редактировать", callback_data="profile:edit_start")],
+            [InlineKeyboardButton(text="Назад", callback_data="back:menu")],
+        ])
+    else:
+        return InlineKeyboardMarkup([
+            [InlineKeyboardButton(text="Новая анкета", callback_data="profile:new_start")],
+            [InlineKeyboardButton(text="Назад", callback_data="back:menu")],
+        ])
+
+
+def edit_profile_preview_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton(text="Подтвердить", callback_data="edit:confirm")],
+        [InlineKeyboardButton(text="Отмена", callback_data="edit:cancel")],
+    ])
+
+
 def admin_review_kb(profile_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
         [InlineKeyboardButton(text="Принять", callback_data=f"review:{profile_id}:accept")],
         [InlineKeyboardButton(text="Отклонить", callback_data=f"review:{profile_id}:reject")],
     ])
+
+
+def admin_manage_profiles_kb(usernames: Iterable[str]) -> InlineKeyboardMarkup:
+    """List of profiles for admin to manage"""
+    buttons = [[InlineKeyboardButton(text=f"Удалить @{u}", callback_data=f"admin:delete:{u}")] for u in usernames]
+    buttons.append([InlineKeyboardButton(text="Назад", callback_data="back:menu")])
+    return InlineKeyboardMarkup(buttons)

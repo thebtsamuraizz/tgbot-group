@@ -95,3 +95,17 @@ def admin_manage_profiles_kb(usernames: Iterable[str]) -> InlineKeyboardMarkup:
     buttons = [[InlineKeyboardButton(text=f"Удалить @{u}", callback_data=f"admin:delete:{u}")] for u in usernames]
     buttons.append([InlineKeyboardButton(text="Назад", callback_data="back:menu")])
     return InlineKeyboardMarkup(buttons)
+
+
+def afk_reason_kb() -> InlineKeyboardMarkup:
+    """Inline keyboard for AFK request reason with cancel button"""
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton(text="❌ Отмена", callback_data="afk:cancel")],
+    ])
+
+
+def admin_app_reason_kb() -> InlineKeyboardMarkup:
+    """Inline keyboard for admin application with cancel button"""
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton(text="❌ Отмена", callback_data="admin_app:cancel")],
+    ])

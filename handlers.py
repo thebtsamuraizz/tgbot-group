@@ -8,7 +8,7 @@ from telegram.ext import (
     CallbackQueryHandler,
     filters,
 )
-from keyboards import main_menu, users_list_kb, profile_actions_kb, confirm_delete_kb, report_categories_kb, new_profile_preview_kb, edit_profile_preview_kb, profile_menu_kb, admin_review_kb, admin_manage_profiles_kb
+from keyboards import main_menu, users_list_kb, profile_actions_kb, confirm_delete_kb, report_categories_kb, new_profile_preview_kb, edit_profile_preview_kb, profile_menu_kb, admin_review_kb, admin_manage_profiles_kb, afk_reason_kb, admin_app_reason_kb
 from templates.messages import *
 import db
 import utils
@@ -295,7 +295,7 @@ async def new_profile_receive(update: Update, context: ContextTypes.DEFAULT_TYPE
         'added_by': user.username,
         'added_by_id': user.id,
         'added_at': iso_now(),
-        'status': 'approved',  # Direct creation without review
+        'status': 'pending',  # NEW PROFILES REQUIRE REVIEW
     }
     context.user_data['new_profile_preview'] = profile
     await update.message.reply_text(short_profile_card(profile), reply_markup=new_profile_preview_kb())
@@ -364,8 +364,27 @@ async def new_profile_confirm_cb(update: Update, context: ContextTypes.DEFAULT_T
     try:
         logger.info('new_profile_confirm_cb: user %s confirmed new profile', q.from_user and q.from_user.id)
         pid = db.add_profile(profile)
-        # Directly save profile without review
-        await q.message.reply_text("✅ Анкета успешно создана!")
+        # Send to admins for review
+        await q.message.reply_text("✅ Анкета отправлена на проверку администраторам!")
+        
+        # Notify admins about new profile for review
+        card = short_profile_card(profile)
+        notified_ids = set(config.ADMIN_IDS or [])
+        if config.SUPER_ADMIN_ID:
+            notified_ids.add(config.SUPER_ADMIN_ID)
+        
+        if notified_ids:
+            text = f"📝 Новая анкета на проверку от @{username} ({q.from_user.id}):\n\n{card}"
+            for aid in notified_ids:
+                try:
+                    await context.bot.send_message(
+                        chat_id=aid,
+                        text=text,
+                        reply_markup=admin_review_kb(pid)
+                    )
+                except Exception:
+                    logger.exception("Failed to notify admin %s about new profile", aid)
+        
         context.user_data.pop('new_profile_preview', None)
     except Exception as e:
         logger.exception("Failed to save profile: %s", e)
@@ -755,7 +774,7 @@ async def admin_review_cb(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     q = update.callback_query
     await q.answer()
     user = update.effective_user
-    if not user or user.id != config.SUPER_ADMIN_ID:
+    if not user or (user.id != config.SUPER_ADMIN_ID and user.id not in config.ADMIN_IDS):
         await q.message.reply_text('Доступ ограничен.')
         return
 
@@ -778,12 +797,12 @@ async def admin_review_cb(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     if action == 'accept':
         ok = db.update_profile_status_by_id(pid, 'approved')
         if ok:
-            await q.message.reply_text(f'Анкета #{pid} принята.')
+            await q.message.reply_text(f'✅ Анкета @{profile.get("username")} принята.')
             # notify submitter if we know their user id
             try:
                 aid = profile.get('added_by_id')
                 if aid:
-                    await context.bot.send_message(chat_id=aid, text=f'Ваша анкета @{profile.get("username")} принята администратором.')
+                    await context.bot.send_message(chat_id=aid, text=f'✅ Ваша анкета @{profile.get("username")} принята администратором! Теперь вы в списке.')
             except Exception:
                 logger.exception('Failed to notify submitter about acceptance for %s', pid)
         else:
@@ -791,11 +810,11 @@ async def admin_review_cb(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     elif action == 'reject':
         ok = db.update_profile_status_by_id(pid, 'rejected')
         if ok:
-            await q.message.reply_text(f'Анкета #{pid} отклонена.')
+            await q.message.reply_text(f'❌ Анкета @{profile.get("username")} отклонена.')
             try:
                 aid = profile.get('added_by_id')
                 if aid:
-                    await context.bot.send_message(chat_id=aid, text=f'Ваша анкета @{profile.get("username")} отклонена администратором.')
+                    await context.bot.send_message(chat_id=aid, text=f'❌ Ваша анкета @{profile.get("username")} отклонена администратором. Вы можете создать новую.')
             except Exception:
                 logger.exception('Failed to notify submitter about rejection for %s', pid)
         else:
@@ -833,7 +852,7 @@ async def afk_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     
     logger.info('afk_start invoked by user=%s', user.id)
     await update.message.reply_text(AFK_INFO)
-    await update.message.reply_text(AFK_PROMPT_DAYS)
+    await update.message.reply_text(AFK_PROMPT_DAYS, reply_markup=afk_reason_kb())
     return AFK_WAIT_DAYS
 
 
@@ -845,14 +864,14 @@ async def afk_receive_days(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     try:
         days = int(text.strip())
         if days < 1 or days > 14:
-            await update.message.reply_text("❌ Количество дней должно быть от 1 до 14.")
+            await update.message.reply_text("❌ Количество дней должно быть от 1 до 14.", reply_markup=afk_reason_kb())
             return AFK_WAIT_DAYS
         context.user_data['afk_days'] = days
         logger.info('afk_receive_days: user=%s days=%d', user.id if user else None, days)
-        await update.message.reply_text(AFK_PROMPT_REASON)
+        await update.message.reply_text(AFK_PROMPT_REASON, reply_markup=afk_reason_kb())
         return AFK_WAIT_REASON
     except ValueError:
-        await update.message.reply_text("❌ Пожалуйста, введите число (1-14).")
+        await update.message.reply_text("❌ Пожалуйста, введите число (1-14).", reply_markup=afk_reason_kb())
         return AFK_WAIT_DAYS
 
 
@@ -863,7 +882,7 @@ async def afk_receive_reason(update: Update, context: ContextTypes.DEFAULT_TYPE)
     days = context.user_data.get('afk_days', 1)
     
     if not reason:
-        await update.message.reply_text("❌ Пожалуйста, укажите причину.")
+        await update.message.reply_text("❌ Пожалуйста, укажите причину.", reply_markup=None)
         return AFK_WAIT_REASON
     
     if len(reason) > 500:
@@ -871,17 +890,7 @@ async def afk_receive_reason(update: Update, context: ContextTypes.DEFAULT_TYPE)
     
     logger.info('afk_receive_reason: user=%s username=%s days=%d reason=%s', user.id if user else None, user.username if user else None, days, reason[:100])
     
-    # Save AFK request to database (add to a special reports table or create afk_requests table)
-    afk_req = {
-        'user_id': user.id if user else None,
-        'username': user.username if user else None,
-        'days': days,
-        'reason': reason,
-        'created_at': iso_now(),
-        'status': 'pending',  # pending review
-    }
-    
-    # Store in database (we'll use a simple approach: add to reports with category 'afk')
+    # Store in database (use reports with category 'afk')
     r = {
         'reporter_id': user.id if user else None,
         'reporter_username': user.username if user else None,
@@ -893,7 +902,7 @@ async def afk_receive_reason(update: Update, context: ContextTypes.DEFAULT_TYPE)
     }
     db.add_report(r)
     
-    await update.message.reply_text(AFK_SUBMITTED)
+    await update.message.reply_text(AFK_SUBMITTED, reply_markup=None)
     
     # Notify admins
     notified_ids = set(config.ADMIN_IDS or [])
@@ -929,15 +938,16 @@ async def admin_afk_requests(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await q.message.reply_text("AFK заявок пока нет.")
         return
     
-    # Show last 10 AFK requests
+    # Show last 10 AFK requests with details
     lines = []
-    for r in afk_requests[:10]:
-        lines.append(f"ID: {r['id']} | @{r.get('reporter_username')} | {r.get('created_at')}\n{r.get('reason')[:150]}")
-    text = f"AFK заявки (всего: {len(afk_requests)}):\n\n" + "\n---\n".join(lines)
+    for r in afk_requests[-10:]:
+        reason_text = r.get('reason', '')
+        lines.append(f"📍 @{r.get('reporter_username')} ({r.get('reporter_id')})\n⏰ {r.get('created_at')}\n📝 {reason_text[:200]}")
+    text = f"🌙 AFK заявки (всего: {len(afk_requests)}):\n\n" + "\n━━━\n".join(lines)
     
     from telegram import InlineKeyboardMarkup, InlineKeyboardButton
     kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton(text="Назад", callback_data="back:menu")],
+        [InlineKeyboardButton(text="⬅️ Назад", callback_data="back:menu")],
     ])
     await q.message.reply_text(text, reply_markup=kb)
 
@@ -959,15 +969,16 @@ async def admin_admin_applications(update: Update, context: ContextTypes.DEFAULT
         await q.message.reply_text("Заявок на админа пока нет.")
         return
     
-    # Show last 10 admin applications
+    # Show last 10 admin applications with details
     lines = []
-    for r in admin_apps[:10]:
-        lines.append(f"ID: {r['id']} | @{r.get('reporter_username')} ({r.get('reporter_id')}) | {r.get('created_at')}\n{r.get('reason')[:150]}")
-    text = f"Заявки на админа (всего: {len(admin_apps)}):\n\n" + "\n---\n".join(lines)
+    for r in admin_apps[-10:]:
+        app_text = r.get('reason', '')
+        lines.append(f"👤 @{r.get('reporter_username')} ({r.get('reporter_id')})\n⏰ {r.get('created_at')}\n📝 {app_text[:200]}")
+    text = f"📋 Заявки на админа (всего: {len(admin_apps)}):\n\n" + "\n━━━\n".join(lines)
     
     from telegram import InlineKeyboardMarkup, InlineKeyboardButton
     kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton(text="Назад", callback_data="back:menu")],
+        [InlineKeyboardButton(text="⬅️ Назад", callback_data="back:menu")],
     ])
     await q.message.reply_text(text, reply_markup=kb)
 
@@ -991,7 +1002,7 @@ async def admin_app_start(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         return -1
     
     logger.info('admin_app_start invoked by user=%s', user.id)
-    await update.message.reply_text(ADMIN_APP_PROMPT)
+    await update.message.reply_text(ADMIN_APP_PROMPT, reply_markup=admin_app_reason_kb())
     return AA_WAIT_TEXT
 
 
@@ -1001,7 +1012,7 @@ async def admin_app_receive(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     app_text = (update.message.text or "").strip()
     
     if not app_text:
-        await update.message.reply_text("❌ Пожалуйста, опишите вашу заявку.")
+        await update.message.reply_text("❌ Пожалуйста, опишите вашу заявку.", reply_markup=admin_app_reason_kb())
         return AA_WAIT_TEXT
     
     if len(app_text) > 1000:
@@ -1021,7 +1032,7 @@ async def admin_app_receive(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     }
     db.add_report(r)
     
-    await update.message.reply_text(ADMIN_APP_SUBMITTED)
+    await update.message.reply_text(ADMIN_APP_SUBMITTED, reply_markup=None)
     
     # Notify admins
     notified_ids = set(config.ADMIN_IDS or [])
@@ -1042,7 +1053,7 @@ async def admin_app_receive(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 ### Cancel handlers for AFK and Admin Application
 
 async def afk_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Cancel AFK request"""
+    """Cancel AFK request via text message"""
     message = update.message
     if message:
         await message.reply_text("❌ Заявка на AFK отменена.")
@@ -1050,9 +1061,26 @@ async def afk_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     return -1
 
 
+async def afk_cancel_inline(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Cancel AFK request via inline button"""
+    q = update.callback_query
+    await q.answer()
+    await q.message.reply_text("❌ Заявка на AFK отменена.")
+    context.user_data.pop('afk_days', None)
+    return -1
+
+
 async def admin_app_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Cancel admin application"""
+    """Cancel admin application via text message"""
     message = update.message
     if message:
         await message.reply_text("❌ Заявка на админа отменена.")
+    return -1
+
+
+async def admin_app_cancel_inline(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Cancel admin application via inline button"""
+    q = update.callback_query
+    await q.answer()
+    await q.message.reply_text("❌ Заявка на админа отменена.")
     return -1

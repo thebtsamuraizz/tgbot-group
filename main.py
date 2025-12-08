@@ -64,6 +64,7 @@ def main():
         },
         fallbacks=[
             MessageHandler(filters.Regex('^Отмена$|^отмена$|^Cancel$|^cancel$'), handlers.afk_cancel),
+            CallbackQueryHandler(handlers.afk_cancel_inline, pattern=r'^afk:cancel$'),
         ],
     )
     app.add_handler(afk_conv)
@@ -76,6 +77,7 @@ def main():
         },
         fallbacks=[
             MessageHandler(filters.Regex('^Отмена$|^отмена$|^Cancel$|^cancel$'), handlers.admin_app_cancel),
+            CallbackQueryHandler(handlers.admin_app_cancel_inline, pattern=r'^admin_app:cancel$'),
         ],
     )
     app.add_handler(admin_app_conv)

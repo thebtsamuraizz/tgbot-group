@@ -98,6 +98,7 @@ def init_db() -> None:
 
 def _seed_profiles() -> None:
     seed = [
+        {"username": "thebitsamuraiizz", "age": 13, "name": None, "country": "Азербайджан", "city": "Баку", "timezone": "UTC+4", "tz_offset": 4, "languages": "Русский, Английский, Азербайджанский", "note": "☆ 𝕋𝕙𝕖 𝔹𝕚𝕥𝕤𝕒𝕞𝕦𝕣𝕒𝕚𝕚𝕫𝕫 ☆ — декоративный стиль"},
         {
             "username": "SkeeYee_j",
             "age": 16,
@@ -112,11 +113,11 @@ def _seed_profiles() -> None:
         {"username": "Cannella_S", "age": None, "name": None, "country": None, "city": None, "timezone": None, "tz_offset": None, "languages": None, "note": None},
         {"username": "nurkotik", "age": 15, "name": None, "country": "Украина", "city": None, "timezone": None, "tz_offset": None, "languages": None, "note": None},
         {"username": "FAFNIR5", "age": 16, "name": "Назар", "country": "Центральная Европа", "city": "Виттен", "timezone": "UTC+1", "tz_offset": 1, "languages": None, "note": None},
-        {"username": "thebitsamuraiizz", "age": 13, "name": None, "country": "Азербайджан", "city": "Баку", "timezone": "UTC+4", "tz_offset": 4, "languages": "Русский, Английский, Азербайджанский", "note": "☆ 𝕋𝕙𝕖 𝔹𝕚𝕥𝕤𝕒𝕞𝕦𝕣𝕒𝕚𝕚𝕫𝕫 ☆ — декоративный стиль"},
         {"username": "doob_rider", "age": 16, "name": "Мирхан", "country": "Казахстан", "city": None, "timezone": "+2 к мск", "tz_offset": 2, "languages": None, "note": None},
         {"username": "Tecno2027", "age": 14, "name": "Тимофей", "country": "Россия", "city": "Екатеринбург", "timezone": "UTC+5", "tz_offset": 5, "languages": None, "note": None},
         {"username": "kixxzzl", "age": 15, "name": "Алёна", "country": "Беларусь", "city": "посёлок Красногорский", "timezone": None, "tz_offset": None, "languages": None, "note": None},
         {"username": "L9g9nda", "age": 11, "name": "создатель", "country": "Украина", "city": "Полтава", "timezone": "+1 к мск", "tz_offset": 1, "languages": None, "note": None},
+        {"username": "denji_kuni", "age": 12, "name": None, "country": "Азербайджан", "city": None, "timezone": "+1 к мск", "tz_offset": 1, "languages": None, "note": None},
     ]
 
     with _lock:

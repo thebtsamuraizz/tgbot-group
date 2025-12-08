@@ -540,8 +540,8 @@ async def chat_info_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
 async def admin_panel_entry(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user = update.effective_user
-    # button visible to all, but only SUPER admin can access
-    if not user or user.id != config.SUPER_ADMIN_ID:
+    # button visible to all, but only SUPER admin or ADMIN_IDS can access
+    if not user or (user.id != config.SUPER_ADMIN_ID and user.id not in config.ADMIN_IDS):
         await update.message.reply_text("Доступ к админ-панели ограничен.")
         return
 
@@ -563,7 +563,7 @@ async def admin_reports_view(update: Update, context: ContextTypes.DEFAULT_TYPE)
     q = update.callback_query
     await q.answer()
     user = update.effective_user
-    if not user or user.id != config.SUPER_ADMIN_ID:
+    if not user or (user.id != config.SUPER_ADMIN_ID and user.id not in config.ADMIN_IDS):
         await q.message.reply_text("Доступ к админ-панели ограничен.")
         return
 
@@ -583,7 +583,7 @@ async def admin_new_profiles_view(update: Update, context: ContextTypes.DEFAULT_
     q = update.callback_query
     await q.answer()
     user = update.effective_user
-    if not user or user.id != config.SUPER_ADMIN_ID:
+    if not user or (user.id != config.SUPER_ADMIN_ID and user.id not in config.ADMIN_IDS):
         await q.message.reply_text("Доступ к админ-панели ограничен.")
         return
 

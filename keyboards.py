@@ -1,0 +1,62 @@
+from telegram import ReplyKeyboardMarkup, InlineKeyboardMarkup, InlineKeyboardButton
+from typing import Iterable
+
+
+def main_menu() -> ReplyKeyboardMarkup:
+    keyboard = [
+        ["Информация о пользователях"],
+        ["Новая анкета"],
+        ["Репорт"],
+        ["Информация о чате"],
+        ["Админ панель"],
+    ]
+    return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+
+
+def users_list_kb(usernames: Iterable[str]) -> InlineKeyboardMarkup:
+    buttons = [[InlineKeyboardButton(text=f"@{u}", callback_data=f"view:{u}")] for u in usernames]
+    # add bottom row: Add new and Back
+    buttons.append([
+        InlineKeyboardButton(text="Добавить новую", callback_data="back:add_new"),
+        InlineKeyboardButton(text="Назад", callback_data="back:menu"),
+    ])
+    return InlineKeyboardMarkup(buttons)
+
+
+def profile_actions_kb(username: str, is_admin: bool = False) -> InlineKeyboardMarkup:
+    buttons = [[InlineKeyboardButton(text="Назад", callback_data="back:users")]]
+    if is_admin:
+        buttons[0].append(InlineKeyboardButton(text="Редактировать", callback_data=f"edit:{username}"))
+        buttons[0].append(InlineKeyboardButton(text="Удалить", callback_data=f"delete:{username}"))
+    return InlineKeyboardMarkup(buttons)
+
+
+def confirm_delete_kb(username: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton(text="Подтвердить удаление", callback_data=f"delete_confirm:{username}")],
+        [InlineKeyboardButton(text="Отмена", callback_data="back:users")],
+    ])
+
+
+def report_categories_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton(text="TG-бот", callback_data="report:bot")],
+        [InlineKeyboardButton(text="TG-канал/группа", callback_data="report:channel")],
+        [InlineKeyboardButton(text="Чат", callback_data="report:chat")],
+        [InlineKeyboardButton(text="Отмена", callback_data="back:menu")],
+    ])
+
+
+def new_profile_preview_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton(text="Подтвердить", callback_data="new:confirm")],
+        [InlineKeyboardButton(text="Редактировать", callback_data="new:edit")],
+        [InlineKeyboardButton(text="Отмена", callback_data="new:cancel")],
+    ])
+
+
+def admin_review_kb(profile_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton(text="Принять", callback_data=f"review:{profile_id}:accept")],
+        [InlineKeyboardButton(text="Отклонить", callback_data=f"review:{profile_id}:reject")],
+    ])

@@ -205,6 +205,7 @@ async def profile_new_start_cb(update: Update, context: ContextTypes.DEFAULT_TYP
     
     logger.info("profile_new_start_cb invoked from user=%s", user.id)
     await q.message.reply_text("Напишите свою анкету (всё что угодно):")
+    await q.message.reply_text(PROFILE_EXAMPLE)
     return NP_WAIT_TEXT
 
 

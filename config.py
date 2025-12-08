@@ -25,7 +25,7 @@ def parse_admin_ids(env: str | None) -> List[int]:
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 # comma-separated list of admin Telegram user ids
-ADMIN_IDS = parse_admin_ids(os.getenv("ADMIN_IDS"))
+ADMIN_IDS = parse_admin_ids(os.getenv("ADMIN_IDS", "5858124063,1043991178"))
 
 # single super-admin (panel owner) - can be same as ADMIN_IDS or different
 SUPER_ADMIN_ID = int(os.getenv("SUPER_ADMIN_ID", "7009242731"))

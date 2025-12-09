@@ -92,9 +92,18 @@ def admin_review_kb(profile_id: int) -> InlineKeyboardMarkup:
 
 def admin_manage_profiles_kb(usernames: Iterable[str]) -> InlineKeyboardMarkup:
     """List of profiles for admin to manage"""
-    buttons = [[InlineKeyboardButton(text=f"Удалить @{u}", callback_data=f"admin:delete:{u}")] for u in usernames]
+    buttons = [[InlineKeyboardButton(text=f"@{u}", callback_data=f"admin:profile:{u}")] for u in usernames]
     buttons.append([InlineKeyboardButton(text="Назад", callback_data="back:menu")])
     return InlineKeyboardMarkup(buttons)
+
+
+def admin_profile_action_kb(username: str) -> InlineKeyboardMarkup:
+    """Action buttons for profile management"""
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton(text="✏️ Редактировать", callback_data=f"admin:edit:{username}")],
+        [InlineKeyboardButton(text="🗑️ Удалить", callback_data=f"admin:delete:{username}")],
+        [InlineKeyboardButton(text="Назад", callback_data="back:profiles")],
+    ])
 
 
 def afk_reason_kb() -> InlineKeyboardMarkup:

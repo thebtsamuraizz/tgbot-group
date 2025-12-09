@@ -8,7 +8,7 @@ from telegram.ext import (
     CallbackQueryHandler,
     filters,
 )
-from keyboards import main_menu, users_list_kb, profile_actions_kb, confirm_delete_kb, report_categories_kb, new_profile_preview_kb, edit_profile_preview_kb, profile_menu_kb, admin_review_kb, admin_manage_profiles_kb, afk_reason_kb, admin_app_reason_kb
+from keyboards import main_menu, users_list_kb, profile_actions_kb, confirm_delete_kb, report_categories_kb, new_profile_preview_kb, edit_profile_preview_kb, profile_menu_kb, admin_review_kb, admin_manage_profiles_kb, admin_profile_action_kb, afk_reason_kb, admin_app_reason_kb
 from templates.messages import *
 import db
 import utils
@@ -58,12 +58,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 async def users_list_entry(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     # send single message with inline keyboard
-    # Try to use cached profiles first
-    cache_key = 'all_approved_profiles'
-    profiles = _get_cached(cache_key)
-    if profiles is None:
-        profiles = db.get_all_profiles(status='approved')
-        _set_cache(cache_key, profiles)
+    # Always get fresh list from DB (don't cache for accuracy)
+    profiles = db.get_all_profiles(status='approved')
     
     usernames = [p['username'] for p in profiles]
     await update.message.reply_text(USERS_LIST_PROMPT, reply_markup=users_list_kb(usernames))
@@ -90,12 +86,14 @@ async def view_profile_cb(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 async def back_to_users(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     q = update.callback_query
     await q.answer()
-    # Use cached profiles
-    cache_key = 'all_profiles'
-    profiles = _get_cached(cache_key)
-    if profiles is None:
-        profiles = db.get_all_profiles()
-        _set_cache(cache_key, profiles)
+    
+    # Check if going back to profiles
+    if q.data == 'back:profiles':
+        await admin_manage_profiles(update, context)
+        return
+    
+    # Always get fresh list from DB (don't cache for accuracy)
+    profiles = db.get_all_profiles()
     
     usernames = [p['username'] for p in profiles]
     # send list again
@@ -198,7 +196,13 @@ async def delete_profile_confirm_cb(update: Update, context: ContextTypes.DEFAUL
     username = q.data.split(':', 1)[1]
     ok = db.delete_profile(username)
     if ok:
+        # Clear from persistent cache
+        profile_cache.delete(username)
+        # Clear from local cache
+        _cache.pop('all_profiles', None)
+        _cache.pop('all_approved_profiles', None)
         await q.message.reply_text(f"Пользователь @{username} удалён.")
+        logger.info('delete_profile_confirm_cb: profile @%s deleted and cleared from cache', username)
     else:
         await q.message.reply_text(f"Не удалось удалить @{username} — возможно пользователь отсутствует.")
 
@@ -212,9 +216,9 @@ async def profile_menu_entry(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await update.message.reply_text(NO_USERNAME_ERROR)
         return
     
-    # Check if user already has a profile
+    # Check if user already has an APPROVED profile
     profile = db.get_profile_by_username(user.username)
-    has_profile = profile is not None
+    has_profile = profile is not None and profile.get('status') == 'approved'
     
     if has_profile:
         await update.message.reply_text(f"У вас уже есть анкета (@{user.username}). Что вы хотите сделать?", 
@@ -234,10 +238,10 @@ async def profile_new_start_cb(update: Update, context: ContextTypes.DEFAULT_TYP
         await q.message.reply_text(NO_USERNAME_ERROR)
         return -1
     
-    # Check if user already has a profile
+    # Check if user already has an APPROVED profile
     profile = db.get_profile_by_username(user.username)
-    if profile:
-        await q.message.reply_text("У вас уже есть анкета! Используйте кнопку 'Редактировать' для её изменения.")
+    if profile and profile.get('status') == 'approved':
+        await q.message.reply_text("У вас уже есть одобренная анкета! Используйте кнопку 'Редактировать' для её изменения.")
         return -1
     
     logger.info("profile_new_start_cb invoked from user=%s", user.id)
@@ -256,10 +260,10 @@ async def profile_edit_start_cb(update: Update, context: ContextTypes.DEFAULT_TY
         await q.message.reply_text(NO_USERNAME_ERROR)
         return -1
     
-    # Check if user has a profile
+    # Check if user has an APPROVED profile
     profile = db.get_profile_by_username(user.username)
-    if not profile:
-        await q.message.reply_text("У вас ещё нет анкеты. Создайте новую!")
+    if not profile or profile.get('status') != 'approved':
+        await q.message.reply_text("У вас ещё нет одобренной анкеты. Создайте новую!")
         return -1
     
     context.user_data['edit_username'] = user.username
@@ -367,12 +371,19 @@ async def new_profile_confirm_cb(update: Update, context: ContextTypes.DEFAULT_T
     # Sanitize profile data
     profile = sanitize_profile_data(profile)
     
-    # Check if username already exists
+    # Check if username already exists with APPROVED status
     username = profile.get('username')
-    if username and db.get_profile_by_username(username):
-        await q.message.reply_text(f"Пользователь @{username} уже существует. Пожалуйста, используйте другой username.")
+    existing_profile = db.get_profile_by_username(username)
+    if existing_profile and existing_profile.get('status') == 'approved':
+        await q.message.reply_text(f"У вас уже есть одобренная анкета @{username}. Используйте кнопку 'Редактировать' для её изменения.")
         context.user_data.pop('new_profile_preview', None)
         return
+    
+    # If profile exists but not approved, delete it first to allow recreation
+    if existing_profile and existing_profile.get('status') != 'approved':
+        db.delete_profile(username)
+        profile_cache.delete(username)
+        logger.info('new_profile_confirm_cb: deleted old non-approved profile @%s before creating new one', username)
     
     try:
         logger.info('new_profile_confirm_cb: user %s confirmed new profile @%s', q.from_user and q.from_user.id, username)
@@ -384,7 +395,10 @@ async def new_profile_confirm_cb(update: Update, context: ContextTypes.DEFAULT_T
         profile_cache.set(pid, profile_with_id)
         
         # Send to admins for review
-        await q.message.reply_text("✅ Анкета отправлена на проверку администраторам!")
+        await q.message.reply_text(
+            "✅ Анкета отправлена на проверку администраторам!\n\n"
+            "После одобрения вы появитесь в списке пользователей."
+        )
         
         # Notify admins about new profile for review
         card = short_profile_card(profile)
@@ -720,7 +734,7 @@ async def admin_new_profiles_view(update: Update, context: ContextTypes.DEFAULT_
 
 
 async def admin_manage_profiles(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Admin can delete any profile from this view"""
+    """Admin can view and manage profiles"""
     q = update.callback_query
     await q.answer()
     user = update.effective_user
@@ -728,15 +742,193 @@ async def admin_manage_profiles(update: Update, context: ContextTypes.DEFAULT_TY
         await q.message.reply_text("Доступ к админ-панели ограничен.")
         return
     
-    # Get all approved profiles
+    # Get all approved profiles - always fresh from DB
     all_profiles = db.get_all_profiles(status='approved')
     if not all_profiles:
         await q.message.reply_text("Нет одобренных анкет.")
         return
     
+    logger.info('admin_manage_profiles: loaded %d approved profiles', len(all_profiles))
     usernames = [p['username'] for p in all_profiles]
-    await q.message.reply_text(f"Всего анкет: {len(all_profiles)}\n\nВыберите анкету для удаления:", 
+    await q.message.reply_text(f"Всего анкет: {len(all_profiles)}\n\nВыберите анкету для управления:", 
                                reply_markup=admin_manage_profiles_kb(usernames))
+
+
+async def admin_back_to_profiles(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Go back to profiles list"""
+    q = update.callback_query
+    await q.answer()
+    await admin_manage_profiles(update, context)
+
+
+async def admin_profile_action(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Show action menu for a profile (edit or delete)"""
+    q = update.callback_query
+    await q.answer()
+    user = update.effective_user
+    if not user or (user.id != config.SUPER_ADMIN_ID and user.id not in config.ADMIN_IDS):
+        await q.message.reply_text("Доступ ограничен.")
+        return
+    
+    # Parse callback: admin:profile:USERNAME
+    parts = q.data.split(':')
+    if len(parts) < 3:
+        await q.message.reply_text("Ошибка: неверная команда.")
+        return
+    username = parts[2]
+    
+    profile = db.get_profile_by_username(username)
+    if not profile:
+        await q.message.reply_text(f"Профиль @{username} не найден.")
+        return
+    
+    # Show profile info and action buttons
+    card = short_profile_card(profile)
+    await q.message.reply_text(f"Профиль @{username}:\n\n{card}\n\nВыберите действие:",
+                               reply_markup=admin_profile_action_kb(username))
+
+
+async def admin_edit_profile_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Start editing profile"""
+    q = update.callback_query
+    await q.answer()
+    user = update.effective_user
+    if not user or (user.id != config.SUPER_ADMIN_ID and user.id not in config.ADMIN_IDS):
+        await q.message.reply_text("Доступ ограничен.")
+        return
+    
+    # Parse callback: admin:edit:USERNAME
+    parts = q.data.split(':')
+    if len(parts) < 3:
+        await q.message.reply_text("Ошибка: неверная команда.")
+        return
+    username = parts[2]
+    
+    profile = db.get_profile_by_username(username)
+    if not profile:
+        await q.message.reply_text(f"Профиль @{username} не найден.")
+        return
+    
+    # Store profile info in context for editing
+    context.user_data['admin_edit_username'] = username
+    context.user_data['admin_edit_profile'] = dict(profile)
+    
+    # Show current profile info and ask what to edit
+    card = short_profile_card(profile)
+    edit_info = (
+        f"📝 Редактирование профиля @{username}\n\n"
+        f"Текущие данные:\n{card}\n\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"📋 СПОСОБ РЕДАКТИРОВАНИЯ:\n\n"
+        f"Вы можете отправить новые данные в одном из форматов:\n\n"
+        f"1️⃣ СТРУКТУРИРОВАННЫЙ ФОРМАТ (рекомендуется):\n"
+        f"age:25\n"
+        f"name:Иван Петров\n"
+        f"country:Россия\n"
+        f"city:Москва\n"
+        f"timezone:Europe/Moscow\n"
+        f"languages:Русский, Английский, Французский\n"
+        f"note:Любой текст с любой информацией\n\n"
+        f"2️⃣ ПРОИЗВОЛЬНЫЙ ТЕКСТ:\n"
+        f"Просто напишите что угодно! Это будет сохранено в поле 'note':\n"
+        f"\"Я люблю путешествовать и программирование. "
+        f"Говорю на 3 языках. Живу в Москве, но часто путешествую.\"\n\n"
+        f"3️⃣ СМЕШАННЫЙ ФОРМАТ:\n"
+        f"age:30\n"
+        f"note:Добавьте сюда всю остальную информацию о себе\n\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"💡 СОВЕТЫ:\n"
+        f"• Отправьте только те поля, которые хотите изменить\n"
+        f"• Если поле не указано, оно не будет изменено\n"
+        f"• Напишите что угодно в 'note' - это может быть описание, интересы, опыт\n"
+        f"• Пустые строки игнорируются"
+    )
+    await q.message.reply_text(edit_info)
+
+
+async def admin_receive_profile_edit(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Receive edited profile data from admin - supports both structured and free text"""
+    username = context.user_data.get('admin_edit_username')
+    if not username:
+        return
+    
+    user = update.effective_user
+    if not user or (user.id != config.SUPER_ADMIN_ID and user.id not in config.ADMIN_IDS):
+        await update.message.reply_text("Доступ ограничен.")
+        return
+    
+    text = update.message.text or ''
+    if not text or text.strip() == '':
+        await update.message.reply_text("Ошибка: отправьте текст.")
+        return
+    
+    try:
+        changes = {}
+        has_structured_format = False
+        
+        # Try to parse as structured format (key:value)
+        lines = text.strip().split('\n')
+        for line in lines:
+            line = line.strip()
+            if not line:
+                continue
+            
+            if ':' in line:
+                has_structured_format = True
+                key, value = line.split(':', 1)
+                key = key.strip().lower()
+                value = value.strip()
+                
+                if not key or not value:
+                    continue
+                
+                if key == 'age':
+                    try:
+                        changes['age'] = int(value)
+                    except ValueError:
+                        await update.message.reply_text(f"❌ Ошибка: возраст должен быть числом.\n\nПример: age:30")
+                        return
+                elif key == 'name':
+                    changes['name'] = value
+                elif key == 'country':
+                    changes['country'] = value
+                elif key == 'city':
+                    changes['city'] = value
+                elif key == 'timezone':
+                    changes['timezone'] = value
+                elif key == 'languages':
+                    changes['languages'] = value
+                elif key == 'note':
+                    changes['note'] = value
+        
+        # If no structured format found, treat entire text as note (free text mode)
+        if not has_structured_format or (not changes and text.strip()):
+            changes['note'] = text.strip()
+        
+        if not changes:
+            await update.message.reply_text("❌ Ошибка: не найдены изменения.")
+            return
+        
+        # Update profile
+        ok = db.update_profile(username, changes)
+        if ok:
+            # Update cache
+            profile_cache.update(username, changes)
+            
+            changed_fields = ', '.join(changes.keys())
+            await update.message.reply_text(
+                f"✅ Профиль @{username} успешно обновлён!\n\n"
+                f"Изменены поля: {changed_fields}"
+            )
+            logger.info('admin_receive_profile_edit: admin %s edited profile %s, fields: %s', user.id, username, changed_fields)
+        else:
+            await update.message.reply_text(f"❌ Ошибка при обновлении профиля.")
+    except Exception as e:
+        logger.exception("Error editing profile")
+        await update.message.reply_text(f"❌ Ошибка: {str(e)}")
+    finally:
+        context.user_data.pop('admin_edit_username', None)
+        context.user_data.pop('admin_edit_profile', None)
 
 
 async def admin_delete_profile(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -824,6 +1016,9 @@ async def admin_review_cb(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         if ok:
             # Update cache
             profile_cache.update(pid, {'status': 'approved', 'reviewed_by_id': user.id})
+            # Clear local cache lists
+            _cache.pop('all_profiles', None)
+            _cache.pop('all_approved_profiles', None)
             
             await q.message.reply_text(f'✅ Анкета @{profile.get("username")} принята.')
             # notify submitter if we know their user id
@@ -840,30 +1035,39 @@ async def admin_review_cb(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         else:
             await q.message.reply_text('Ошибка при принятии анкеты.')
     elif action == 'reject':
-        ok = db.update_profile_status_and_review(pid, 'rejected', user.id)
+        username = profile.get('username')
+        # COMPLETELY DELETE the profile when rejected - so user can create new one
+        ok = db.delete_profile(username)
         if ok:
-            # Update cache
-            profile_cache.update(pid, {'status': 'rejected', 'reviewed_by_id': user.id})
+            # Clear from persistent cache
+            profile_cache.delete(username)
+            # Clear from local cache lists
+            _cache.pop('all_profiles', None)
+            _cache.pop('all_approved_profiles', None)
             
-            await q.message.reply_text(f'❌ Анкета @{profile.get("username")} отклонена.')
+            await q.message.reply_text(f'❌ Анкета @{username} отклонена и удалена.')
             try:
                 aid = profile.get('added_by_id')
                 if aid:
                     await retry_telegram_request(
                         context.bot.send_message,
                         chat_id=aid,
-                        text=f'❌ Ваша анкета @{profile.get("username")} отклонена администратором. Вы можете создать новую.'
+                        text=f'❌ Ваша анкета @{username} отклонена администратором. Вы можете создать новую.'
                     )
             except Exception:
                 logger.exception('Failed to notify submitter about rejection for %s', pid)
+            logger.info('admin_review_cb: admin %s rejected and deleted profile @%s (id=%s)', user.id, username, pid)
         else:
             await q.message.reply_text('Ошибка при отклонении анкеты.')
     elif action == 'delete':
         username = profile.get('username')
         ok = db.delete_profile(username)
         if ok:
-            # Invalidate cache
-            profile_cache.invalidate(pid)
+            # Clear from persistent cache by username
+            profile_cache.delete(username)
+            # Clear from local cache
+            _cache.pop('all_profiles', None)
+            _cache.pop('all_approved_profiles', None)
             
             await q.message.reply_text(f'Анкета @{username} удалена из списка.')
             logger.info('admin_review_cb: admin deleted profile @%s (id=%s)', username, pid)

@@ -178,7 +178,7 @@ def main():
         # ========== CALLBACK QUERY HANDLERS ==========
         # Callback handlers
         app.add_handler(CallbackQueryHandler(handlers.view_profile_cb, pattern=r'^view:'))
-        app.add_handler(CallbackQueryHandler(handlers.back_to_users, pattern=r'^back:users$|^back:menu$|^back:add_new$'))
+        app.add_handler(CallbackQueryHandler(handlers.back_to_users, pattern=r'^back:users$|^back:menu$|^back:add_new$|^back:profiles$'))
         app.add_handler(CallbackQueryHandler(handlers.delete_profile_cb, pattern=r'^delete:'))
         app.add_handler(CallbackQueryHandler(handlers.delete_profile_confirm_cb, pattern=r'^delete_confirm:'))
         # Profile menu callbacks
@@ -189,9 +189,11 @@ def main():
         app.add_handler(CallbackQueryHandler(handlers.admin_clear_reports, pattern=r'^admin:clear_reports$'))
         app.add_handler(CallbackQueryHandler(handlers.admin_new_profiles_view, pattern=r'^admin:new_profiles$'))
         app.add_handler(CallbackQueryHandler(handlers.admin_manage_profiles, pattern=r'^admin:manage_profiles$'))
+        app.add_handler(CallbackQueryHandler(handlers.admin_profile_action, pattern=r'^admin:profile:'))
+        app.add_handler(CallbackQueryHandler(handlers.admin_edit_profile_start, pattern=r'^admin:edit:'))
+        app.add_handler(CallbackQueryHandler(handlers.admin_delete_profile, pattern=r'^admin:delete:'))
         app.add_handler(CallbackQueryHandler(handlers.admin_afk_requests, pattern=r'^admin:afk_requests$'))
         app.add_handler(CallbackQueryHandler(handlers.admin_admin_applications, pattern=r'^admin:admin_applications$'))
-        app.add_handler(CallbackQueryHandler(handlers.admin_delete_profile, pattern=r'^admin:delete:'))
         # review callbacks (accept/reject)
         app.add_handler(CallbackQueryHandler(handlers.admin_review_cb, pattern=r'^review:'))
         # callback for choosing category in report flow
@@ -208,6 +210,9 @@ def main():
 
         # Try to auto-process freeform profile submissions (private chat) before generic admin edit hook
         app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handlers.try_auto_profile_submit))
+
+        # admin profile editing hook
+        app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handlers.admin_receive_profile_edit))
 
         # admin editing hook
         app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handlers.admin_receive_edit))

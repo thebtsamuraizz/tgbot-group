@@ -106,6 +106,18 @@ class PersistentProfileCache:
                 del self.timestamps[pid]
         self._save_to_disk()
     
+    def delete(self, username: str) -> None:
+        """Delete profile from cache by username"""
+        with _lock:
+            pids_to_delete = [pid for pid, profile in self.cache.items() if profile.get('username') == username]
+            for pid in pids_to_delete:
+                if pid in self.cache:
+                    del self.cache[pid]
+                if pid in self.timestamps:
+                    del self.timestamps[pid]
+        if pids_to_delete:
+            self._save_to_disk()
+    
     def invalidate_all(self) -> None:
         """Clear entire cache"""
         with _lock:

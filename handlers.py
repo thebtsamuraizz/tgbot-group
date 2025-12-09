@@ -17,6 +17,9 @@ from utils import iso_now, parse_profile_text, short_profile_card
 from typing import Dict, Any
 from functools import lru_cache
 from time import time
+from cache_manager import profile_cache
+from rate_limiter import check_rate_limit, retry_telegram_request
+from validators import validate_profile_text, sanitize_text, sanitize_profile_data
 
 logger = logging.getLogger(__name__)
 
@@ -354,6 +357,16 @@ async def new_profile_confirm_cb(update: Update, context: ContextTypes.DEFAULT_T
         await q.message.reply_text("Нет данных для сохранения.")
         return
     
+    # Validate profile text
+    profile_text = profile.get('note', '')
+    is_valid, error_msg = validate_profile_text(profile_text) if profile_text else (True, None)
+    if not is_valid:
+        await q.message.reply_text(f"❌ {error_msg}")
+        return
+    
+    # Sanitize profile data
+    profile = sanitize_profile_data(profile)
+    
     # Check if username already exists
     username = profile.get('username')
     if username and db.get_profile_by_username(username):
@@ -362,8 +375,14 @@ async def new_profile_confirm_cb(update: Update, context: ContextTypes.DEFAULT_T
         return
     
     try:
-        logger.info('new_profile_confirm_cb: user %s confirmed new profile', q.from_user and q.from_user.id)
+        logger.info('new_profile_confirm_cb: user %s confirmed new profile @%s', q.from_user and q.from_user.id, username)
         pid = db.add_profile(profile)
+        
+        # Cache the new profile for quick access
+        profile_with_id = dict(profile)
+        profile_with_id['id'] = pid
+        profile_cache.set(pid, profile_with_id)
+        
         # Send to admins for review
         await q.message.reply_text("✅ Анкета отправлена на проверку администраторам!")
         
@@ -377,7 +396,8 @@ async def new_profile_confirm_cb(update: Update, context: ContextTypes.DEFAULT_T
             text = f"📝 Новая анкета на проверку от @{username} ({q.from_user.id}):\n\n{card}"
             for aid in notified_ids:
                 try:
-                    await context.bot.send_message(
+                    await retry_telegram_request(
+                        context.bot.send_message,
                         chat_id=aid,
                         text=text,
                         reply_markup=admin_review_kb(pid)
@@ -794,27 +814,46 @@ async def admin_review_cb(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         await q.message.reply_text('Анкета не найдена.')
         return
 
+    # Check if profile has already been reviewed
+    if profile.get('reviewed_by_id') is not None:
+        await q.message.reply_text('❌ Эта анкета уже была проверена. Повторное решение невозможно.\n\nПользователь должен отправить новую анкету для повторной проверки.')
+        return
+
     if action == 'accept':
-        ok = db.update_profile_status_by_id(pid, 'approved')
+        ok = db.update_profile_status_and_review(pid, 'approved', user.id)
         if ok:
+            # Update cache
+            profile_cache.update(pid, {'status': 'approved', 'reviewed_by_id': user.id})
+            
             await q.message.reply_text(f'✅ Анкета @{profile.get("username")} принята.')
             # notify submitter if we know their user id
             try:
                 aid = profile.get('added_by_id')
                 if aid:
-                    await context.bot.send_message(chat_id=aid, text=f'✅ Ваша анкета @{profile.get("username")} принята администратором! Теперь вы в списке.')
+                    await retry_telegram_request(
+                        context.bot.send_message,
+                        chat_id=aid,
+                        text=f'✅ Ваша анкета @{profile.get("username")} принята администратором! Теперь вы в списке.'
+                    )
             except Exception:
                 logger.exception('Failed to notify submitter about acceptance for %s', pid)
         else:
             await q.message.reply_text('Ошибка при принятии анкеты.')
     elif action == 'reject':
-        ok = db.update_profile_status_by_id(pid, 'rejected')
+        ok = db.update_profile_status_and_review(pid, 'rejected', user.id)
         if ok:
+            # Update cache
+            profile_cache.update(pid, {'status': 'rejected', 'reviewed_by_id': user.id})
+            
             await q.message.reply_text(f'❌ Анкета @{profile.get("username")} отклонена.')
             try:
                 aid = profile.get('added_by_id')
                 if aid:
-                    await context.bot.send_message(chat_id=aid, text=f'❌ Ваша анкета @{profile.get("username")} отклонена администратором. Вы можете создать новую.')
+                    await retry_telegram_request(
+                        context.bot.send_message,
+                        chat_id=aid,
+                        text=f'❌ Ваша анкета @{profile.get("username")} отклонена администратором. Вы можете создать новую.'
+                    )
             except Exception:
                 logger.exception('Failed to notify submitter about rejection for %s', pid)
         else:
@@ -823,6 +862,9 @@ async def admin_review_cb(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         username = profile.get('username')
         ok = db.delete_profile(username)
         if ok:
+            # Invalidate cache
+            profile_cache.invalidate(pid)
+            
             await q.message.reply_text(f'Анкета @{username} удалена из списка.')
             logger.info('admin_review_cb: admin deleted profile @%s (id=%s)', username, pid)
         else:

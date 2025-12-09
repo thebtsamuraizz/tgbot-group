@@ -78,6 +78,16 @@ def init_db() -> None:
                 cur.execute("UPDATE profiles SET status = 'approved' WHERE status IS NULL OR status = ''")
             except Exception:
                 pass
+        if 'reviewed_by_id' not in existing:
+            try:
+                cur.execute("ALTER TABLE profiles ADD COLUMN reviewed_by_id INTEGER")
+            except Exception:
+                pass
+        if 'reviewed_at' not in existing:
+            try:
+                cur.execute("ALTER TABLE profiles ADD COLUMN reviewed_at TEXT")
+            except Exception:
+                pass
         
         # Create indexes for fast queries
         try:
@@ -227,6 +237,21 @@ def update_profile_status_by_id(pid: int, status: str) -> bool:
         return affected > 0
 
 
+def update_profile_status_and_review(pid: int, status: str, reviewed_by_id: int) -> bool:
+    """Update profile status and mark it as reviewed by admin"""
+    with _lock:
+        conn = _connect()
+        cur = conn.cursor()
+        cur.execute(
+            "UPDATE profiles SET status = ?, reviewed_by_id = ?, reviewed_at = ? WHERE id = ?",
+            (status, reviewed_by_id, datetime.utcnow().isoformat(), pid)
+        )
+        conn.commit()
+        affected = cur.rowcount
+        conn.close()
+        return affected > 0
+
+
 def update_profile(username: str, changes: Dict[str, Any]) -> bool:
     keys = []
     values = []
@@ -299,3 +324,5 @@ def clear_reports() -> bool:
         affected = cur.rowcount
         conn.close()
         return affected > 0
+    
+# -----End of db.py-----

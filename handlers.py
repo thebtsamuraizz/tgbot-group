@@ -1,5 +1,5 @@
 import logging
-from telegram import Update, Bot, __version__ as bot_version
+from telegram import Update, Bot, __version__ as bot_version, ReplyKeyboardMarkup, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import (
     ContextTypes,
     ConversationHandler,
@@ -8,7 +8,7 @@ from telegram.ext import (
     CallbackQueryHandler,
     filters,
 )
-from keyboards import main_menu, users_list_kb, profile_actions_kb, confirm_delete_kb, report_categories_kb, new_profile_preview_kb, edit_profile_preview_kb, profile_menu_kb, admin_review_kb, admin_manage_profiles_kb, admin_profile_action_kb, afk_reason_kb, admin_app_reason_kb
+from keyboards import main_menu, users_list_kb, profile_actions_kb, confirm_delete_kb, report_categories_kb, new_profile_preview_kb, edit_profile_preview_kb, profile_menu_kb, admin_review_kb, admin_manage_profiles_kb, admin_profile_action_kb, afk_days_kb, afk_reason_kb, admin_app_reason_kb, admin_add_profile_cancel_kb
 from templates.messages import *
 import db
 import utils
@@ -70,6 +70,11 @@ async def admins_list_entry(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     await update.message.reply_text(ADMINS_LIST)
 
 
+async def rules_entry(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Send rules to user"""
+    await update.message.reply_text(RULES)
+
+
 async def view_profile_cb(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     q = update.callback_query
     await q.answer()
@@ -80,7 +85,7 @@ async def view_profile_cb(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         return
     is_admin = (q.from_user.id in config.ADMIN_IDS)
     card = short_profile_card(profile)
-    await q.message.reply_text(card, reply_markup=profile_actions_kb(data, is_admin, q.from_user.id, profile.get('added_by_id')))
+    await q.message.reply_text(card, parse_mode='HTML', reply_markup=profile_actions_kb(data, is_admin, q.from_user.id, profile.get('added_by_id')))
 
 
 async def back_to_users(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -141,7 +146,7 @@ async def edit_profile_receive(update: Update, context: ContextTypes.DEFAULT_TYP
     # Update the note field in preview
     profile['note'] = text
     context.user_data['edit_profile_preview'] = profile
-    await update.message.reply_text(short_profile_card(profile), reply_markup=edit_profile_preview_kb())
+    await update.message.reply_text(short_profile_card(profile), parse_mode='HTML', reply_markup=edit_profile_preview_kb())
     return -1
 
 
@@ -164,12 +169,27 @@ async def edit_profile_confirm_cb(update: Update, context: ContextTypes.DEFAULT_
             
             # Notify super-admin for review of the change
             try:
+                import html as _html
                 admin_id = config.SUPER_ADMIN_ID
-                card = short_profile_card(profile)
-                await context.bot.send_message(chat_id=admin_id, text=f"Обновление анкеты @{username} на ревью:\n{card}")
+                original_note = profile.get('note', '')
+                # Escape for safe HTML display while preserving line breaks
+                escaped_note = _html.escape(original_note)
+                # Send header (plain text, no HTML)
+                await retry_telegram_request(
+                    context.bot.send_message,
+                    chat_id=admin_id,
+                    text=f"📝 Обновление анкеты @{username} на ревью:",
+                )
+                # Send original text with HTML escaping to preserve line breaks
+                await retry_telegram_request(
+                    context.bot.send_message,
+                    chat_id=admin_id,
+                    text=escaped_note,
+                    parse_mode='HTML',
+                )
                 logger.info('edit_profile_confirm_cb: sent review message to super_admin=%s for user=%s', admin_id, username)
             except Exception:
-                logger.exception("Failed to notify super admin about profile update for %s", username)
+                logger.exception('edit_profile_confirm_cb: failed to notify super admin %s', admin_id)
         else:
             await q.message.reply_text("Ошибка при обновлении анкеты.")
         
@@ -269,8 +289,13 @@ async def profile_edit_start_cb(update: Update, context: ContextTypes.DEFAULT_TY
     context.user_data['edit_username'] = user.username
     current_text = profile.get('note', '')
     logger.info("profile_edit_start_cb invoked from user=%s", user.id)
-    await q.message.reply_text(f"Редактируете свою анкету.\n\nТекущий текст:\n{current_text}\n\nОтправьте новый текст анкеты:")
+    
+    # Show current profile
+    card = short_profile_card(profile)
+    await q.message.reply_text(f"Ваша текущая анкета:\n\n{card}", parse_mode='HTML')
+    await q.message.reply_text("Отправьте новый текст анкеты:")
     return EP_WAIT_TEXT
+
 
 
 ### NEW PROFILE flow (Conversation)
@@ -286,7 +311,8 @@ async def new_profile_receive(update: Update, context: ContextTypes.DEFAULT_TYPE
         return -1
 
     text = update.message.text or ""
-    logger.info("new_profile_receive: user=%s text=%s", user.id if user else None, (text or '')[:120])
+    
+    logger.info("new_profile_receive: user=%s text_len=%s text_repr=%s", user.id if user else None, len(text), repr(text[:200]))
     
     # Just save the raw text as note, no parsing required
     profile = {
@@ -305,7 +331,7 @@ async def new_profile_receive(update: Update, context: ContextTypes.DEFAULT_TYPE
         'status': 'pending',  # NEW PROFILES REQUIRE REVIEW
     }
     context.user_data['new_profile_preview'] = profile
-    await update.message.reply_text(short_profile_card(profile), reply_markup=new_profile_preview_kb())
+    await update.message.reply_text(short_profile_card(profile), parse_mode='HTML', reply_markup=new_profile_preview_kb())
     return -1
 
 
@@ -349,7 +375,7 @@ async def try_auto_profile_submit(update: Update, context: ContextTypes.DEFAULT_
     }
     context.user_data['new_profile_preview'] = profile
     logger.info('try_auto_profile_submit: prepared preview for user=%s username=%s', user and user.id, profile.get('username'))
-    await update.message.reply_text(short_profile_card(profile), reply_markup=new_profile_preview_kb())
+    await update.message.reply_text(short_profile_card(profile), parse_mode='HTML', reply_markup=new_profile_preview_kb())
     return
 
 
@@ -401,19 +427,38 @@ async def new_profile_confirm_cb(update: Update, context: ContextTypes.DEFAULT_T
         )
         
         # Notify admins about new profile for review
-        card = short_profile_card(profile)
+        # Send the ORIGINAL profile text first (exactly as user sent it)
+        original_note = profile.get('note', '')
+        logger.info("new_profile_confirm_cb: sending to admins, note_len=%s note_repr=%s", len(original_note), repr(original_note[:200]))
         notified_ids = set(config.ADMIN_IDS or [])
         if config.SUPER_ADMIN_ID:
             notified_ids.add(config.SUPER_ADMIN_ID)
         
         if notified_ids:
-            text = f"📝 Новая анкета на проверку от @{username} ({q.from_user.id}):\n\n{card}"
+            import html as _html
+            header = f"📝 Новая анкета на проверку от @{username} ({q.from_user.id}):"
+            # Escape the note text for safe HTML display while preserving line breaks
+            escaped_note = _html.escape(original_note)
             for aid in notified_ids:
                 try:
+                    # Send header (plain text, no HTML)
                     await retry_telegram_request(
                         context.bot.send_message,
                         chat_id=aid,
-                        text=text,
+                        text=header,
+                    )
+                    # Send original profile text with HTML escaping to preserve line breaks
+                    await retry_telegram_request(
+                        context.bot.send_message,
+                        chat_id=aid,
+                        text=escaped_note,
+                        parse_mode='HTML',
+                    )
+                    # Send buttons for review
+                    await retry_telegram_request(
+                        context.bot.send_message,
+                        chat_id=aid,
+                        text="Выберите действие:",
                         reply_markup=admin_review_kb(pid)
                     )
                 except Exception:
@@ -657,6 +702,7 @@ async def admin_panel_entry(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             [InlineKeyboardButton(text="Посмотреть репорты", callback_data="admin:reports")],
             [InlineKeyboardButton(text="Новые анкеты (user-added)", callback_data="admin:new_profiles")],
             [InlineKeyboardButton(text="Управление анкетами", callback_data="admin:manage_profiles")],
+            [InlineKeyboardButton(text="➕ Создать новую анкету", callback_data="admin:add_profile")],
             [InlineKeyboardButton(text="AFK заявки", callback_data="admin:afk_requests")],
             [InlineKeyboardButton(text="Заявки на админа", callback_data="admin:admin_applications")],
             [InlineKeyboardButton(text="Закрыть", callback_data="back:menu")],
@@ -728,7 +774,7 @@ async def admin_new_profiles_view(update: Update, context: ContextTypes.DEFAULT_
     for p in added_user_profiles[:20]:
         card = short_profile_card(p)
         try:
-            await q.message.reply_text(card, reply_markup=admin_review_kb(p.get('id')))
+            await q.message.reply_text(card, parse_mode='HTML', reply_markup=admin_review_kb(p.get('id')))
         except Exception:
             logger.exception("Failed to send profile preview to admin for id %s", p.get('id'))
 
@@ -785,7 +831,7 @@ async def admin_profile_action(update: Update, context: ContextTypes.DEFAULT_TYP
     # Show profile info and action buttons
     card = short_profile_card(profile)
     await q.message.reply_text(f"Профиль @{username}:\n\n{card}\n\nВыберите действие:",
-                               reply_markup=admin_profile_action_kb(username))
+                               parse_mode='HTML', reply_markup=admin_profile_action_kb(username))
 
 
 async def admin_edit_profile_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -843,7 +889,8 @@ async def admin_edit_profile_start(update: Update, context: ContextTypes.DEFAULT
         f"• Напишите что угодно в 'note' - это может быть описание, интересы, опыт\n"
         f"• Пустые строки игнорируются"
     )
-    await q.message.reply_text(edit_info)
+    cancel_kb = InlineKeyboardMarkup([[InlineKeyboardButton(text="❌ Отмена редактирования", callback_data="admin:edit:cancel")]])
+    await q.message.reply_text(edit_info, parse_mode='HTML', reply_markup=cancel_kb)
 
 
 async def admin_receive_profile_edit(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -858,6 +905,14 @@ async def admin_receive_profile_edit(update: Update, context: ContextTypes.DEFAU
         return
     
     text = update.message.text or ''
+    
+    # Check for cancel
+    if text == "❌ Отмена редактирования":
+        context.user_data.pop('admin_edit_username', None)
+        context.user_data.pop('admin_edit_profile', None)
+        await update.message.reply_text("❌ Редактирование отменено.", reply_markup=main_menu())
+        return
+    
     if not text or text.strip() == '':
         await update.message.reply_text("Ошибка: отправьте текст.")
         return
@@ -1077,10 +1132,42 @@ async def admin_review_cb(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         await q.message.reply_text('Неизвестное действие.')
 
 
+### Admin add profile flow (Conversation)
+
+ADMIN_ADD_PROFILE_WAIT_USERNAME = 10
+ADMIN_ADD_PROFILE_WAIT_NOTE = 11
+
+
 ### AFK flow (Conversation)
 
 AFK_WAIT_DAYS = 4
 AFK_WAIT_REASON = 5
+
+
+async def afk_receive_days_inline(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Receive number of days for AFK via inline button"""
+    q = update.callback_query
+    await q.answer()
+    
+    user = update.effective_user
+    if not user or not user.username:
+        await q.message.reply_text("⚠️ Установите username в профиле Telegram.")
+        return -1
+    
+    # Parse days from callback data: afk:days:7
+    try:
+        days = int(q.data.split(':')[2])
+        if days < 1 or days > 30:
+            await q.message.reply_text("❌ Неверное количество дней.")
+            return AFK_WAIT_DAYS
+    except (ValueError, IndexError):
+        await q.message.reply_text("❌ Ошибка при обработке выбора.")
+        return AFK_WAIT_DAYS
+    
+    context.user_data['afk_days'] = days
+    logger.info('afk_receive_days_inline: user=%s days=%d', user.id, days)
+    await q.message.reply_text(AFK_PROMPT_REASON)
+    return AFK_WAIT_REASON
 
 
 async def afk_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -1098,7 +1185,7 @@ async def afk_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     
     logger.info('afk_start invoked by user=%s', user.id)
     await update.message.reply_text(AFK_INFO)
-    await update.message.reply_text(AFK_PROMPT_DAYS, reply_markup=afk_reason_kb())
+    await update.message.reply_text(AFK_PROMPT_DAYS, reply_markup=afk_days_kb())
     return AFK_WAIT_DAYS
 
 
@@ -1110,14 +1197,14 @@ async def afk_receive_days(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     try:
         days = int(text.strip())
         if days < 1 or days > 14:
-            await update.message.reply_text("❌ Количество дней должно быть от 1 до 14.", reply_markup=afk_reason_kb())
+            await update.message.reply_text("❌ Количество дней должно быть от 1 до 14.", reply_markup=afk_days_kb())
             return AFK_WAIT_DAYS
         context.user_data['afk_days'] = days
         logger.info('afk_receive_days: user=%s days=%d', user.id if user else None, days)
         await update.message.reply_text(AFK_PROMPT_REASON, reply_markup=afk_reason_kb())
         return AFK_WAIT_REASON
     except ValueError:
-        await update.message.reply_text("❌ Пожалуйста, введите число (1-14).", reply_markup=afk_reason_kb())
+        await update.message.reply_text("❌ Пожалуйста, введите число (1-14).", reply_markup=afk_days_kb())
         return AFK_WAIT_DAYS
 
 
@@ -1156,10 +1243,15 @@ async def afk_receive_reason(update: Update, context: ContextTypes.DEFAULT_TYPE)
         notified_ids.add(config.SUPER_ADMIN_ID)
     
     if notified_ids:
-        text = f"🌙 Новая AFK заявка от @{user.username} ({user.id})\n\n⏰ Срок: {days} дней\n\n📝 Причина:\n{reason}"
+        text = f"🌙 <b>Новая AFK заявка от @{user.username} ({user.id})</b>\n\n⏰ <b>Срок:</b> {days} дней\n\n📝 <b>Причина:</b>\n{reason}"
         for aid in notified_ids:
             try:
-                await context.bot.send_message(chat_id=aid, text=text)
+                await retry_telegram_request(
+                    context.bot.send_message,
+                    chat_id=aid,
+                    text=text,
+                    parse_mode='HTML',
+                )
             except Exception:
                 logger.exception("Failed to notify admin %s about AFK request", aid)
     
@@ -1324,6 +1416,120 @@ async def admin_app_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     return -1
 
 
+### Admin add profile flow (handlers)
+
+async def admin_add_profile_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Start admin add profile flow"""
+    q = update.callback_query
+    await q.answer()
+    
+    user = update.effective_user
+    if not user or (user.id != config.SUPER_ADMIN_ID and user.id not in config.ADMIN_IDS):
+        await q.message.reply_text("❌ Доступ запрещён")
+        return -1
+    
+    await q.message.reply_text(
+        "📝 Создание новой анкеты\n\n"
+        + PROFILE_EXAMPLE +
+        "\n\n"
+        "Укажите юзернейм пользователя (@username):",
+        reply_markup=admin_add_profile_cancel_kb()
+    )
+    return ADMIN_ADD_PROFILE_WAIT_USERNAME
+
+
+async def admin_add_profile_receive_username(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Receive username from admin"""
+    user = update.effective_user
+    username = (update.message.text or "").strip().lstrip('@')
+    
+    if not username or len(username) < 5 or len(username) > 32:
+        await update.message.reply_text(
+            "❌ Неверный юзернейм. Должен быть от 5 до 32 символов.",
+            reply_markup=admin_add_profile_cancel_kb()
+        )
+        return ADMIN_ADD_PROFILE_WAIT_USERNAME
+    
+    # Check if profile already exists
+    existing = db.get_profile_by_username(username)
+    if existing:
+        await update.message.reply_text(
+            f"❌ Профиль @{username} уже существует.",
+            reply_markup=admin_add_profile_cancel_kb()
+        )
+        return ADMIN_ADD_PROFILE_WAIT_USERNAME
+    
+    context.user_data['admin_add_username'] = username
+    logger.info('admin_add_profile_receive_username: admin=%s wants to add @%s', user.id, username)
+    
+    await update.message.reply_text(
+        f"✅ Юзернейм: @{username}\n\n"
+        "Теперь отправьте анкету пользователя:",
+        reply_markup=admin_add_profile_cancel_kb()
+    )
+    return ADMIN_ADD_PROFILE_WAIT_NOTE
+
+
+async def admin_add_profile_receive_note(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Receive profile note from admin and save"""
+    user = update.effective_user
+    note = (update.message.text or "").strip()
+    username = context.user_data.get('admin_add_username')
+    
+    if not note or len(note) < 10:
+        await update.message.reply_text(
+            "❌ Анкета слишком короткая (минимум 10 символов).",
+            reply_markup=admin_add_profile_cancel_kb()
+        )
+        return ADMIN_ADD_PROFILE_WAIT_NOTE
+    
+    try:
+        # Create profile
+        profile = {
+            'username': username,
+            'age': None,
+            'name': None,
+            'country': None,
+            'city': None,
+            'timezone': None,
+            'tz_offset': None,
+            'languages': None,
+            'note': note,
+            'added_by': user.username if user else 'admin',
+            'added_by_id': user.id if user else None,
+            'added_at': iso_now(),
+            'status': 'approved',  # Admin-added profiles are auto-approved
+        }
+        
+        pid = db.add_profile(profile)
+        profile_with_id = dict(profile)
+        profile_with_id['id'] = pid
+        profile_cache.set(pid, profile_with_id)
+        
+        logger.info('admin_add_profile_receive_note: admin=%s added profile @%s', user.id, username)
+        
+        await update.message.reply_text(
+            f"✅ Анкета @{username} успешно добавлена в список!\n\n"
+            "📋 Содержание анкеты:\n"
+            + note
+        )
+        
+        context.user_data.pop('admin_add_username', None)
+        return -1
+        
+    except Exception as e:
+        logger.exception("Failed to add profile via admin: %s", e)
+        await update.message.reply_text("❌ Ошибка при сохранении анкеты.")
+        return ADMIN_ADD_PROFILE_WAIT_NOTE
+
+
+async def admin_add_profile_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Cancel admin add profile"""
+    q = update.callback_query
+    await q.answer()
+    await q.message.reply_text("❌ Создание анкеты отменено.")
+    context.user_data.pop('admin_add_username', None)
+    return -1
 async def admin_app_cancel_inline(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Cancel admin application via inline button"""
     q = update.callback_query

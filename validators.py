@@ -134,7 +134,11 @@ def sanitize_profile_data(data: dict) -> dict:
         if value is None:
             sanitized[key] = None
         elif isinstance(value, str):
-            sanitized[key] = sanitize_text(value)
+            # IMPORTANT: Do NOT sanitize 'note' field - it needs to preserve line breaks
+            if key == 'note':
+                sanitized[key] = value.strip()  # Only strip, don't remove newlines
+            else:
+                sanitized[key] = sanitize_text(value)
         else:
             sanitized[key] = value
     

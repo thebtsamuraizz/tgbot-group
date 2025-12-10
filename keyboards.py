@@ -9,7 +9,7 @@ def main_menu() -> ReplyKeyboardMarkup:
         ["Репорт"],
         ["AFK"],
         ["Заявка на админа"],
-        ["Информация о чате"],
+        ["Правила", "Информация о чате"],
         ["Админы"],
         ["Админ панель"],
     ]
@@ -18,7 +18,6 @@ def main_menu() -> ReplyKeyboardMarkup:
 
 def users_list_kb(usernames: Iterable[str]) -> InlineKeyboardMarkup:
     buttons = [[InlineKeyboardButton(text=f"@{u}", callback_data=f"view:{u}")] for u in usernames]
-    # add bottom row: Add new and Back
     buttons.append([
         InlineKeyboardButton(text="Добавить новую", callback_data="back:add_new"),
         InlineKeyboardButton(text="Назад", callback_data="back:menu"),
@@ -50,7 +49,7 @@ def report_categories_kb() -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="TG-бот", callback_data="report:bot")],
         [InlineKeyboardButton(text="TG-канал/группа", callback_data="report:channel")],
         [InlineKeyboardButton(text="Чат", callback_data="report:chat")],
-        [InlineKeyboardButton(text="Отмена", callback_data="back:menu")],
+        [InlineKeyboardButton(text="❌ Отмена", callback_data="report:cancel")],
     ])
 
 
@@ -106,8 +105,19 @@ def admin_profile_action_kb(username: str) -> InlineKeyboardMarkup:
     ])
 
 
+def afk_days_kb() -> InlineKeyboardMarkup:
+    """Inline keyboard for selecting AFK days"""
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton(text="1 день", callback_data="afk:days:1"),
+         InlineKeyboardButton(text="3 дня", callback_data="afk:days:3")],
+        [InlineKeyboardButton(text="7 дней", callback_data="afk:days:7"),
+         InlineKeyboardButton(text="14 дней", callback_data="afk:days:14")],
+        [InlineKeyboardButton(text="❌ Отмена", callback_data="afk:cancel")],
+    ])
+
+
 def afk_reason_kb() -> InlineKeyboardMarkup:
-    """Inline keyboard for AFK request reason with cancel button"""
+    """Inline keyboard for AFK reason input - only cancel button"""
     return InlineKeyboardMarkup([
         [InlineKeyboardButton(text="❌ Отмена", callback_data="afk:cancel")],
     ])
@@ -117,4 +127,11 @@ def admin_app_reason_kb() -> InlineKeyboardMarkup:
     """Inline keyboard for admin application with cancel button"""
     return InlineKeyboardMarkup([
         [InlineKeyboardButton(text="❌ Отмена", callback_data="admin_app:cancel")],
+    ])
+
+
+def admin_add_profile_cancel_kb() -> InlineKeyboardMarkup:
+    """Inline keyboard for admin adding profile with cancel button"""
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton(text="❌ Отмена", callback_data="admin_add_profile:cancel")],
     ])

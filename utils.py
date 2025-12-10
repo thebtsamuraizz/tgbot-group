@@ -86,19 +86,55 @@ def iso_now() -> str:
 
 
 def short_profile_card(profile: Dict[str, Any]) -> str:
-    parts = [f"@{profile['username']}" if profile.get('username') else "(без ника)"]
+    """Format profile card with proper line breaks and emojis.
+
+    Escape user-provided fields for safe HTML output.
+    """
+    import html as _html
+    lines = []
+
+    # Helper to escape or return empty
+    def esc(val):
+        if val is None:
+            return ''
+        return _html.escape(str(val))
+
+    # Username
+    if profile.get('username'):
+        lines.append(f"👤 <b>@{esc(profile.get('username'))}</b>")
+    else:
+        lines.append("👤 (без ника)")
+
+    # Name
     if profile.get('name'):
-        parts.append(f"Имя: {profile.get('name')}")
-    if profile.get('age'):
-        parts.append(f"Возраст: {profile.get('age')}")
+        lines.append(f"📝 <b>Имя:</b> {esc(profile.get('name'))}")
+
+    # Age
+    if profile.get('age') is not None:
+        lines.append(f"🎂 <b>Возраст:</b> {esc(profile.get('age'))}")
+
+    # Country
     if profile.get('country'):
-        parts.append(f"Страна: {profile.get('country')}")
+        lines.append(f"🌍 <b>Страна:</b> {esc(profile.get('country'))}")
+
+    # City
     if profile.get('city'):
-        parts.append(f"Город: {profile.get('city')}")
+        lines.append(f"🏙️ <b>Город:</b> {esc(profile.get('city'))}")
+
+    # Timezone
     if profile.get('timezone'):
-        parts.append(f"Часовой пояс: {profile.get('timezone')}")
+        lines.append(f"🕐 <b>Часовой пояс:</b> {esc(profile.get('timezone'))}")
+
+    # Languages
     if profile.get('languages'):
-        parts.append(f"Языки: {profile.get('languages')}")
+        lines.append(f"💬 <b>Языки:</b> {esc(profile.get('languages'))}")
+
+    # Note (preserve all line breaks)
     if profile.get('note'):
-        parts.append(f"Заметки: {profile.get('note')}")
-    return '\n'.join(parts)
+        note = esc(profile.get('note', '')).strip()
+        if note:
+            lines.append(f"📋 <b>Заметка:</b>")
+            # preserve original newlines (escaped already)
+            lines.extend(note.split('\n'))
+
+    return '\n'.join(lines)

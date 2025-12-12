@@ -8,7 +8,7 @@ from telegram.ext import (
     CallbackQueryHandler,
     filters,
 )
-from keyboards import main_menu, users_list_kb, profile_actions_kb, confirm_delete_kb, report_categories_kb, new_profile_preview_kb, edit_profile_preview_kb, profile_menu_kb, admin_review_kb, admin_manage_profiles_kb, admin_profile_action_kb, afk_days_kb, afk_reason_kb, admin_app_reason_kb, admin_add_profile_cancel_kb
+from keyboards import main_menu, users_list_kb, profile_actions_kb, confirm_delete_kb, report_categories_kb, new_profile_preview_kb, edit_profile_preview_kb, profile_menu_kb, admin_review_kb, admin_manage_profiles_kb, admin_manage_profiles_kb_paged, admin_profile_action_kb, afk_days_kb, afk_reason_kb, admin_app_reason_kb, admin_add_profile_cancel_kb
 from templates.messages import *
 import db
 import utils
@@ -93,7 +93,7 @@ async def back_to_users(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     await q.answer()
     
     # Check if going back to profiles
-    if q.data == 'back:profiles':
+    if q.data in ('back:profiles', 'back:manage_profiles'):
         await admin_manage_profiles(update, context)
         return
     
@@ -793,11 +793,36 @@ async def admin_manage_profiles(update: Update, context: ContextTypes.DEFAULT_TY
     if not all_profiles:
         await q.message.reply_text("Нет одобренных анкет.")
         return
-    
+
     logger.info('admin_manage_profiles: loaded %d approved profiles', len(all_profiles))
     usernames = [p['username'] for p in all_profiles]
-    await q.message.reply_text(f"Всего анкет: {len(all_profiles)}\n\nВыберите анкету для управления:", 
-                               reply_markup=admin_manage_profiles_kb(usernames))
+
+    # Pagination: 12 items per page
+    PAGE_SIZE = 12
+    # Determine requested page from callback data if present: admin:manage_profiles:page:X
+    page = 0
+    if q.data and ':' in q.data:
+        parts = q.data.split(':')
+        # pattern may be ['admin','manage_profiles','page','N']
+        if len(parts) >= 4 and parts[2] == 'page':
+            try:
+                page = max(0, int(parts[3]))
+            except Exception:
+                page = 0
+
+    total = len(usernames)
+    total_pages = (total + PAGE_SIZE - 1) // PAGE_SIZE if total > 0 else 1
+    if page >= total_pages:
+        page = total_pages - 1
+
+    start = page * PAGE_SIZE
+    end = start + PAGE_SIZE
+    page_usernames = usernames[start:end]
+
+    await q.message.reply_text(
+        f"Всего анкет: {total}\n\nВыберите анкету для управления:",
+        reply_markup=admin_manage_profiles_kb_paged(page_usernames, page, total_pages)
+    )
 
 
 async def admin_back_to_profiles(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1061,12 +1086,9 @@ async def admin_review_cb(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         await q.message.reply_text('Анкета не найдена.')
         return
 
-    # Check if profile has already been reviewed
-    if profile.get('reviewed_by_id') is not None:
-        await q.message.reply_text('❌ Эта анкета уже была проверена. Повторное решение невозможно.\n\nПользователь должен отправить новую анкету для повторной проверки.')
-        return
-
     if action == 'accept':
+        # Atomically attempt to set reviewed_by_id and status
+        # This will only succeed if reviewed_by_id is NULL (not yet reviewed)
         ok = db.update_profile_status_and_review(pid, 'approved', user.id)
         if ok:
             # Update cache
@@ -1088,12 +1110,15 @@ async def admin_review_cb(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             except Exception:
                 logger.exception('Failed to notify submitter about acceptance for %s', pid)
         else:
-            await q.message.reply_text('Ошибка при принятии анкеты.')
+            # Атомарное обновление не сработало = анкета уже была проверена другим админом
+            await q.message.reply_text('❌ Эта анкета уже была проверена другим администратором. Повторное решение невозможно.\n\nПользователь должен отправить новую анкету для повторной проверки.')
     elif action == 'reject':
         username = profile.get('username')
-        # COMPLETELY DELETE the profile when rejected - so user can create new one
-        ok = db.delete_profile(username)
+        # Atomically mark as rejected (only if not yet reviewed)
+        ok = db.reject_profile_atomic(pid, user.id)
         if ok:
+            # Then delete the profile - user can create new one
+            db.delete_profile(username)
             # Clear from persistent cache
             profile_cache.delete(username)
             # Clear from local cache lists
@@ -1113,7 +1138,8 @@ async def admin_review_cb(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                 logger.exception('Failed to notify submitter about rejection for %s', pid)
             logger.info('admin_review_cb: admin %s rejected and deleted profile @%s (id=%s)', user.id, username, pid)
         else:
-            await q.message.reply_text('Ошибка при отклонении анкеты.')
+            # Атомарное обновление не сработало = анкета уже была проверена другим админом
+            await q.message.reply_text('❌ Эта анкета уже была проверена другим администратором. Повторное решение невозможно.\n\nПользователь должен отправить новую анкету для повторной проверки.')
     elif action == 'delete':
         username = profile.get('username')
         ok = db.delete_profile(username)

@@ -91,8 +91,25 @@ def admin_review_kb(profile_id: int) -> InlineKeyboardMarkup:
 
 def admin_manage_profiles_kb(usernames: Iterable[str]) -> InlineKeyboardMarkup:
     """List of profiles for admin to manage"""
+    # usernames here are only the page slice
     buttons = [[InlineKeyboardButton(text=f"@{u}", callback_data=f"admin:profile:{u}")] for u in usernames]
+    # default back to admin panel
     buttons.append([InlineKeyboardButton(text="Назад", callback_data="back:menu")])
+    return InlineKeyboardMarkup(buttons)
+
+
+def admin_manage_profiles_kb_paged(usernames: Iterable[str], page: int, total_pages: int) -> InlineKeyboardMarkup:
+    """Paged list of profiles with navigation buttons"""
+    buttons = [[InlineKeyboardButton(text=f"@{u}", callback_data=f"admin:profile:{u}")] for u in usernames]
+    nav = []
+    if page > 0:
+        nav.append(InlineKeyboardButton(text="⬅️", callback_data=f"admin:manage_profiles:page:{page-1}"))
+    nav.append(InlineKeyboardButton(text=f"{page+1}/{total_pages}", callback_data="admin:manage_profiles:page:info"))
+    if page < total_pages - 1:
+        nav.append(InlineKeyboardButton(text="➡️", callback_data=f"admin:manage_profiles:page:{page+1}"))
+    buttons.append(nav)
+    # Back to admin panel
+    buttons.append([InlineKeyboardButton(text="Закрыть", callback_data="back:menu")])
     return InlineKeyboardMarkup(buttons)
 
 
@@ -101,7 +118,7 @@ def admin_profile_action_kb(username: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
         [InlineKeyboardButton(text="✏️ Редактировать", callback_data=f"admin:edit:{username}")],
         [InlineKeyboardButton(text="🗑️ Удалить", callback_data=f"admin:delete:{username}")],
-        [InlineKeyboardButton(text="Назад", callback_data="back:profiles")],
+        [InlineKeyboardButton(text="Назад", callback_data="back:manage_profiles")],
     ])
 
 

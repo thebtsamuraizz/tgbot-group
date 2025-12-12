@@ -242,12 +242,29 @@ def update_profile_status_and_review(pid: int, status: str, reviewed_by_id: int)
     with _lock:
         conn = _connect()
         cur = conn.cursor()
+        # Do an atomic conditional update: only apply if the profile hasn't been reviewed yet
         cur.execute(
-            "UPDATE profiles SET status = ?, reviewed_by_id = ?, reviewed_at = ? WHERE id = ?",
+            "UPDATE profiles SET status = ?, reviewed_by_id = ?, reviewed_at = ? WHERE id = ? AND reviewed_by_id IS NULL",
             (status, reviewed_by_id, datetime.utcnow().isoformat(), pid)
         )
         conn.commit()
         affected = cur.rowcount
+        conn.close()
+        return affected > 0
+
+
+def reject_profile_atomic(pid: int, reviewed_by_id: int) -> bool:
+    """Atomically reject profile - only if not yet reviewed by anyone"""
+    with _lock:
+        conn = _connect()
+        cur = conn.cursor()
+        # First mark as rejected with review info (don't delete yet - keep history)
+        cur.execute(
+            "UPDATE profiles SET status = ?, reviewed_by_id = ?, reviewed_at = ? WHERE id = ? AND reviewed_by_id IS NULL",
+            ('rejected', reviewed_by_id, datetime.utcnow().isoformat(), pid)
+        )
+        affected = cur.rowcount
+        conn.commit()
         conn.close()
         return affected > 0
 
